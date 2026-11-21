@@ -1,0 +1,623 @@
+================================================================================
+heyPudú! — Estado del proyecto
+================================================================================
+Versión: 1.4
+Fecha: 2026-11-18
+Propósito: Registro único de funcionalidades hechas y tareas por hacer.
+
+Este archivo debe actualizarse cada vez que se complete una tarea relevante.
+El estado se basa en el código actualmente presente y en la arquitectura
+definida en contexto general.txt.
+
+
+================================================================================
+1. DECISIONES DE ARQUITECTURA
+================================================================================
+
+DESPLIEGUE
+----------
+- El frontend React/Vite se despliega en Vercel.
+- El backend corre en una EC2 con Docker Compose.
+- Las imágenes se publican en Docker Hub y la EC2 solo hace `pull`.
+- La base de datos es PostgreSQL administrado en Neon (schemas separados).
+- La entrada pública es un API Gateway HTTP API que apunta a un ALB.
+- Los microservicios no están expuestos directamente al navegador: sus puertos
+  8081-8085 solo aceptan tráfico del Security Group del ALB.
+- RabbitMQ se ejecuta en una EC2 separada con dos nodos Docker (`rabbit1` y
+  `rabbit2`); la comunicación AMQP usa la red privada.
+- Detalle completo en DESPLIEGUE-AWS.md.
+
+AUTENTICACIÓN
+-------------
+- Se utilizará un único AWS Cognito User Pool.
+- Los usuarios normales se registrarán desde el frontend.
+- Los administradores no tendrán registro público.
+- Los administradores se crearán mediante la consola de Cognito, AWS CLI o
+  un proceso administrativo restringido.
+- Los permisos se determinarán mediante grupos de Cognito:
+  - user     -> ROLE_USER
+  - admin    -> ROLE_ADMIN
+  - internal -> ROLE_INTERNAL (futuro).
+
+ALMACENAMIENTO
+--------------
+- Los archivos se almacenan en S3.
+- Los buckets deben permanecer privados.
+- El frontend sube archivos directamente a S3 utilizando URLs prefirmadas.
+- La base de datos almacena keys de S3, nunca URLs permanentes.
+
+MICROSERVICIOS
+--------------
+- Cada microservicio mantiene su propio esquema de base de datos.
+- Ningún microservicio accede directamente a la base de datos de otro.
+- La comunicación síncrona entre microservicios se realiza mediante REST y la
+  comunicación asíncrona de comandos/eventos mediante RabbitMQ.
+- Los endpoints internos utilizan el prefijo /api/v1/internal/.
+- El identificador entre microservicios es el `cognitoSub` del JWT; `ms-users`
+  expone endpoints `by-cognito/...` para resolver desde ese valor.
+
+
+================================================================================
+2. HECHO
+================================================================================
+
+2.1 BACKEND BASE
+----------------
+- [HECHO] Existen cinco microservicios Spring Boot independientes:
+  - ms-auth.
+  - ms-users.
+  - ms-posts.
+  - ms-interactions.
+  - ms-heypudu-rabbit-admin.
+- [HECHO] Cada microservicio tiene build.gradle y settings.gradle propios.
+- [HECHO] Cada microservicio tiene su propia clase de aplicación.
+- [HECHO] Cada microservicio tiene Dockerfile propio.
+- [HECHO] Se utiliza Java 25.
+- [HECHO] Se utiliza Spring Boot 3.5.0.
+- [HECHO] Se utiliza Gradle.
+- [HECHO] Se utiliza PostgreSQL.
+- [HECHO] Se utiliza Spring Data JPA.
+- [HECHO] Se utiliza Flyway para migraciones.
+- [HECHO] Hibernate está configurado con ddl-auto: validate.
+- [HECHO] Se utiliza Spring Security con OAuth2 Resource Server.
+- [HECHO] Se utiliza RestClient para comunicación entre servicios.
+- [HECHO] Se utiliza Spring Boot Actuator para health/info.
+
+2.2 BASE DE DATOS
+-----------------
+- [HECHO] Existe PostgreSQL compartido para desarrollo local.
+- [HECHO] Existe init-db.sql.
+- [HECHO] Existen esquemas separados:
+  - heypudu_auth.
+  - heypudu_users.
+  - heypudu_posts.
+  - heypudu_interactions.
+- [HECHO] Existen migraciones Flyway para los microservicios.
+- [HECHO] El modelo de usuarios incluye perfil, estado, verificación y
+  contadores.
+- [HECHO] Existe el modelo de seguimientos.
+- [HECHO] Existe el modelo de publicaciones TEXT y AUDIO.
+- [HECHO] Existe el modelo de likes.
+- [HECHO] Existe el modelo de comentarios.
+- [HECHO] Existe el modelo de notificaciones persistidas en `ms-users`.
+
+2.3 AUTENTICACIÓN Y COGNITO EN BACKEND
+--------------------------------------
+- [HECHO] El backend valida JWT de Cognito como Resource Server.
+- [HECHO] ms-auth tiene configuración para Cognito Admin.
+- [HECHO] Existe sincronización mediante POST /api/v1/auth/sync.
+- [HECHO] ms-auth registra usuarios en auth_users.
+- [HECHO] ms-auth solicita a ms-users la creación del perfil base.
+- [HECHO] ms-auth puede deshabilitar usuarios en Cognito.
+- [HECHO] ms-auth puede habilitar usuarios en Cognito.
+- [HECHO] ms-auth puede eliminar usuarios en Cognito.
+- [HECHO] Existen endpoints internos para operaciones administrativas de
+  Cognito.
+- [HECHO] El backend extrae el sub de Cognito desde el JWT.
+- [HECHO] La arquitectura define grupos user, admin e internal.
+
+2.4 MS-USERS
+------------
+- [HECHO] Obtener el perfil propio:
+  GET /api/v1/users/me
+- [HECHO] Actualizar el perfil propio:
+  PUT /api/v1/users/me
+- [HECHO] Eliminar la cuenta:
+  DELETE /api/v1/users/me
+- [HECHO] Obtener perfil público:
+  GET /api/v1/users/{id}
+- [HECHO] Buscar usuarios:
+  GET /api/v1/users/search?q=
+- [HECHO] Seguir usuarios.
+- [HECHO] Dejar de seguir usuarios.
+- [HECHO] Listar seguidores.
+- [HECHO] Listar usuarios seguidos.
+- [HECHO] Crear perfiles base mediante endpoint interno.
+- [HECHO] Obtener resúmenes para otros microservicios.
+- [HECHO] Existe lógica de cambio de username cada 30 días.
+- [HECHO] Existe anonimización de cuenta eliminada.
+- [HECHO] Existe baneo y desbloqueo en la lógica de usuarios.
+- [HECHO] Existe verificación y desverificación de usuarios.
+- [HECHO] Existe listado administrativo de usuarios.
+
+2.5 MS-POSTS
+------------
+- [HECHO] Crear publicaciones.
+- [HECHO] Obtener una publicación.
+- [HECHO] Listar publicaciones propias.
+- [HECHO] Listar publicaciones de un autor.
+- [HECHO] Actualizar publicaciones.
+- [HECHO] Eliminar publicaciones.
+- [HECHO] Obtener feed general.
+- [HECHO] Obtener feed personalizado.
+- [HECHO] Buscar publicaciones.
+- [HECHO] Soportar publicaciones TEXT.
+- [HECHO] Soportar publicaciones AUDIO.
+- [HECHO] Validar contenido requerido según el tipo.
+- [HECHO] Validar duración de audio entre 1 y 300 segundos.
+- [HECHO] Actualizar contadores de likes y comentarios mediante endpoint
+  interno.
+- [HECHO] Anonimizar publicaciones por autor mediante endpoint interno.
+
+2.6 MS-INTERACTIONS
+-------------------
+- [HECHO] Crear like.
+- [HECHO] Eliminar like.
+- [HECHO] Listar likes de una publicación.
+- [HECHO] Obtener cantidad de likes.
+- [HECHO] Listar publicaciones con like del usuario.
+- [HECHO] Crear comentario.
+- [HECHO] Listar comentarios.
+- [HECHO] Eliminar comentario propio.
+- [HECHO] Eliminar comentario mediante endpoint administrativo.
+- [HECHO] Eliminar interacciones de una publicación mediante endpoint interno.
+- [HECHO] Eliminar interacciones de un usuario mediante endpoint interno.
+- [HECHO] Actualizar contadores en ms-posts.
+
+2.7 S3 EN BACKEND
+-----------------
+- [HECHO] Existe S3Client en ms-users.
+- [HECHO] Existe S3Presigner en ms-users.
+- [HECHO] Existe S3Client en ms-posts.
+- [HECHO] Existe S3Presigner en ms-posts.
+- [HECHO] Existe bucket de avatares.
+- [HECHO] Existe bucket de audio.
+- [HECHO] Existe bucket de portadas.
+- [HECHO] Generar URL prefirmada para avatar:
+  POST /api/v1/users/me/avatar/presigned-url
+- [HECHO] Generar URL prefirmada para audio:
+  POST /api/v1/posts/audio/presigned-url
+- [HECHO] Generar URL prefirmada para portada:
+  POST /api/v1/posts/covers/presigned-url
+- [HECHO] Las URLs de subida tienen vigencia de 15 minutos.
+- [HECHO] Las URLs de descarga tienen vigencia de 60 minutos.
+- [HECHO] Se generan URLs de descarga para avatares.
+- [HECHO] Se generan URLs de descarga para audio.
+- [HECHO] Se generan URLs de descarga para portadas.
+- [HECHO] Se eliminan archivos S3 al reemplazar avatar.
+- [HECHO] Se eliminan audio y portada al eliminar publicaciones.
+- [HECHO] Se validan tipos básicos:
+  - Avatar: image/*.
+  - Audio: audio/*.
+  - Portada: image/*.
+- [HECHO] Se sanitiza el nombre de archivo.
+- [HECHO] Se utiliza UUID en las keys generadas.
+- [HECHO] La configuración de buckets existe para dev y prod.
+- [HECHO] Docker Compose define las variables de buckets de desarrollo.
+
+2.8 CORS BACKEND
+-----------------
+- [HECHO] Los cinco microservicios tienen configuración CORS integrada con
+  Spring Security.
+- [HECHO] Se permite configurar los orígenes mediante
+  APP_CORS_ALLOWED_ORIGINS.
+- [HECHO] Se contemplan solicitudes OPTIONS de preflight.
+- [HECHO] La configuración evita depender obligatoriamente de *.
+
+2.9 DOCUMENTACIÓN E INFRAESTRUCTURA LOCAL
+-----------------------------------------
+- [HECHO] Existe docker-compose.yml.
+- [HECHO] Docker Compose levanta PostgreSQL y los cuatro microservicios de
+  negocio; el administrador RabbitMQ se ejecuta en el compose productivo.
+- [HECHO] Existen README generales e individuales.
+- [HECHO] La documentación describe S3 y URLs prefirmadas.
+- [HECHO] La documentación indica que el frontend se desplegará separadamente.
+- [HECHO] Existe frontend React/Vite.
+- [HECHO] El frontend compila con Vite.
+- [HECHO] Existen rutas y páginas visuales iniciales.
+- [HECHO] Existe una maqueta visual del dashboard.
+- [HECHO] Existe una maqueta visual de actividades.
+- [HECHO] Se instalaron aws-amplify y @aws-amplify/ui-react.
+- [HECHO] Se creó la configuración inicial de Amplify en
+  heyPudu-frontend-web/src/auth/amplify.ts.
+- [HECHO] Se agregaron VITE_COGNITO_USER_POOL_ID,
+  VITE_COGNITO_CLIENT_ID y VITE_AWS_REGION a .env.example.
+- [HECHO] Se separó /login del layout principal de la aplicación.
+- [HECHO] /login utiliza el componente Authenticator de Amplify cuando
+  Cognito está configurado.
+- [HECHO] Cognito y Authenticator gestionan el registro de usuarios normales.
+- [HECHO] Cognito y Authenticator gestionan la confirmación de cuenta por
+  código enviado al correo electrónico.
+- [HECHO] Cognito y Authenticator gestionan el inicio de sesión y el cierre de
+  sesión.
+- [HECHO] Cognito y Authenticator gestionan la recuperación y el reseteo de
+  contraseñas.
+- [HECHO] Después de autenticarse, /login redirige a /perfil/editar.
+- [HECHO] La redirección utiliza el usuario autenticado expuesto por
+  Authenticator, sin crear todavía un AuthContext propio.
+- [HECHO] Se agregó vercel.json con un rewrite de SPA para que las rutas de
+  React Router, incluida /login, funcionen al abrirse directamente en Vercel.
+- [HECHO] /login muestra una instrucción explícita cuando faltan las
+  variables de Cognito.
+- [HECHO] Se agregaron las tipificaciones de import.meta.env de Vite.
+- [HECHO] El frontend compila mediante npm run build después de la integración
+  inicial de Amplify.
+- [HECHO] Se creó el User Pool de Cognito `us-east-1_cG7mgX7Ec` en la región
+  us-east-1, configurado con email como identificador de inicio de sesión.
+- [HECHO] Se creó el App Client público
+  `4b4r8stp99hlhcsel54e0lgrcs` sin client secret.
+- [HECHO] Se configuró el entorno local del frontend con el User Pool ID,
+  App Client ID y región actuales.
+- [HECHO] El archivo .env local está excluido mediante .gitignore.
+
+2.10 INTEGRACIÓN FRONTEND CON BACKEND
+-------------------------------------
+- [HECHO] Cliente HTTP centralizado con Axios (src/api/httpClient.ts).
+- [HECHO] Interceptor que adjunta el ID token de Cognito (contiene email).
+- [HECHO] Normalización de errores HTTP (src/api/errors.ts).
+- [HECHO] Servicios tipados: authService, usersService, postsService,
+  interactionsService, upload.
+- [HECHO] Contratos TypeScript en src/types/api.ts.
+- [HECHO] POST /v1/auth/sync al iniciar sesión, no bloqueante.
+- [HECHO] Perfil propio real (GET /v1/users/me) y perfil público.
+- [HECHO] Feed personal real (GET /v1/posts/feed) con estados de carga,
+  error y vacío.
+- [HECHO] Creación de publicaciones exclusivamente de tipo AUDIO.
+- [HECHO] Grabación con MediaRecorder y subida directa a S3.
+- [HECHO] Edición y eliminación de publicaciones.
+- [HECHO] Likes persistentes con estado optimista y rollback.
+- [HECHO] Comentarios paginados con autores enriquecidos y contador sincronizado.
+- [HECHO] Edición de perfil con subida de avatar a S3.
+- [HECHO] Reproductor de audio funcional con barra de progreso.
+- [HECHO] "Mis briefcasts" carga publicaciones reales (GET /v1/posts/me).
+- [HECHO] Panel /admin conectado: reportes de comentarios y audios.
+- [HECHO] Acción "Reportar" en comentarios del detalle.
+
+2.11 ADMINISTRACIÓN
+-------------------
+- [HECHO] Grupo `admin` en Cognito y guard RequireAdmin.
+- [HECHO] POST /api/v1/comments/{commentId}/reports.
+- [HECHO] GET/PUT /api/v1/admin/comment-reports.
+- [HECHO] DELETE /api/v1/admin/comments/{commentId}.
+- [HECHO] POST /api/v1/posts/{postId}/reports.
+- [HECHO] GET/PUT /api/v1/admin/posts/reports.
+- [HECHO] GET /api/v1/admin/posts/audio.
+- [HECHO] DELETE /api/v1/admin/posts/{postId} con limpieza de S3 e interacciones.
+- [HECHO] Migración V3 con tablas comment_reports y post_reports.
+- [HECHO] Migración V4 con índice único parcial sobre reportes OPEN y columna
+  resolved_by, para permitir re-reportar conservando historial.
+- [HECHO] Conteos de reportes por autor en ms-posts y ms-interactions.
+- [HECHO] GET /api/v1/admin/users/ban-candidates con umbral de reportes.
+- [HECHO] Ban y unban desde el panel, con motivo.
+
+2.12 DESPLIEGUE EN AWS
+----------------------
+- [HECHO] Backend ejecutado en EC2 (Amazon Linux 2023, t3.small) con Docker.
+- [HECHO] Imágenes publicadas en Docker Hub (unalmaermitana/heypudu-ms-*).
+- [HECHO] docker-compose.prod.yml ejecuta los 5 servicios sin compilar.
+- [HECHO] Base de datos en Neon PostgreSQL (RDS bloqueado por política de
+  AWS Academy).
+- [HECHO] Flyway crea los esquemas heypudu_auth, heypudu_users,
+  heypudu_posts y heypudu_interactions.
+- [HECHO] Swap de 2 GB y límites de memoria por contenedor.
+- [HECHO] IAM Role LabInstanceRole para acceso a S3.
+- [HECHO] CORS en los buckets de avatares, audio y portadas.
+- [HECHO] HTTPS en el ALB con certificado ACM.
+- [HECHO] Application Load Balancer con 5 target groups por puerto.
+- [HECHO] API Gateway HTTP API con ruta ANY /{proxy+} hacia el ALB.
+- [HECHO] Frontend en Vercel con VITE_API_BASE_URL apuntando a API Gateway.
+- [HECHO] Documento DESPLIEGUE-AWS.md con toda la configuración.
+
+2.13 FRONTEND COMPLETADO
+------------------------
+- [HECHO] Busqueda real de personas y briefcasts con debounce.
+- [HECHO] Paginacion del feed con boton "Cargar mas".
+- [HECHO] Publicaciones en el perfil publico.
+- [HECHO] Reporte de comentarios y publicaciones con motivo.
+- [HECHO] Eliminar publicaciones propias desde el menu de la tarjeta.
+- [HECHO] Foto de perfil como fondo del recuadro en los tres perfiles.
+- [HECHO] Portada, extracto, fecha y duracion reales en las tarjetas.
+- [HECHO] Nombre visible del autor y @usuario en tarjeta, detalle, perfil,
+  busqueda y likes (migracion V5 de ms-posts).
+- [HECHO] Reproductor global con avance calculado sobre la duracion guardada.
+- [HECHO] Utilidades compartidas de fecha y duracion (src/utils).
+
+2.14 RABBITMQ Y MENSAJERÍA ASÍNCRONA
+-------------------------------------
+- [HECHO] Clúster RabbitMQ de dos nodos (`rabbit1` y `rabbit2`) en una EC2
+  separada.
+- [HECHO] Exchanges `ex.heypudu.cmd`, `ex.heypudu.events` y
+  `ex.heypudu.dlx`.
+- [HECHO] Colas funcionales `q.heypudu.command`, `q.heypudu.notification` y
+  `q.heypudu.audit`, cada una con su DLQ.
+- [HECHO] `ms-posts` publica `post.delete`.
+- [HECHO] `ms-interactions` consume `post.delete` con ACK manual y NACK sin
+  reencolado.
+- [HECHO] `ms-interactions` publica eventos de likes y comentarios.
+- [HECHO] `ms-users` publica `user.followed` y persiste notificaciones.
+- [HECHO] `ms-posts` consume eventos para auditoría.
+- [HECHO] Existe `ms-heypudu-rabbit-admin` en el puerto `8085` para administrar
+  exchanges, colas y bindings con autorización `ROLE_ADMIN`.
+- [HECHO] Se documentaron TTL, límites de cola, límite de entregas y DLQ.
+
+2.15 SALAS DE AUDIO EN VIVO Y KAFKA (EN CURSO)
+----------------------------------------------
+Guia de construccion: PLAN-IMPLEMENTACION-KAFKA.md (v1.1, 18-11-2026).
+Rama de trabajo: feature/ms-live, 2 commits sobre develop/main (5864a4b).
+
+- [HECHO] Consulta interna de seguimiento en ms-users:
+  GET /api/v1/internal/users/by-cognito/{creatorSub}/followers/check?
+  followerCognitoSub=... (commit 040e25e).
+- [HECHO] FollowService.isFollowing(...): 404 si el creador no existe y
+  false si el oyente no existe o esta inactivo.
+- [HECHO] Test unitario FollowServiceImplTest (Mockito) y dependencias de
+  test reactivadas en ms-users/build.gradle.
+- [HECHO] Microservicio ms-live creado (puerto 8086, esquema heypudu_live)
+  con seguridad Cognito, entidad, repositorio, servicio, controlador, DTOs y
+  manejo de excepciones (commit 8a91122).
+- [HECHO] CRUD de salas: crear, cerrar (solo el creador, idempotente),
+  listar activas y detalle.
+- [HECHO] GET /api/v1/live/rooms/{id}/access consulta a ms-users y responde
+  si el usuario puede escuchar la sala.
+- [HECHO] Migracion V1__init_live_rooms.sql con indice unico parcial que
+  impide dos salas LIVE por creador.
+- [HECHO] ms-live, su esquema y su usuario agregados a docker-compose.yml e
+  init-db.sql.
+- [PENDIENTE] Infraestructura Kafka local (KRaft) y topico
+  heypudu.live.events.
+- [PENDIENTE] Productor LiveRoomEvent en ms-live (ROOM_CREATED, REACTION,
+  LISTENER_JOINED/LEFT).
+- [PENDIENTE] ms-analytics (puerto 8087, consumer group live-analytics-group).
+- [PENDIENTE] Mensajeria RabbitMQ de salas (room.created / room.closed).
+- [PENDIENTE] MediaMTX: despliegue, auth HTTP, hooks y HTTPS/WSS.
+- [PENDIENTE] Frontend: liveService, WHIP/WHEP y pantallas /en-vivo.
+- [PENDIENTE] Prueba punta a punta de /access con un seguidor y un no
+  seguidor reales.
+- [PENDIENTE] Alta de ms-live y ms-analytics en docker-compose.prod.yml,
+  reglas del ALB y bloqueo de /api/v1/internal/** en API Gateway.
+
+Observaciones: createRoom guarda el cognitoSub en creator_id y en
+creator_cognito_sub; build.gradle de ms-live declara Lombok aunque la
+entidad no lo usa. La bitacora de commits vive en la seccion 12 del plan.
+
+
+
+================================================================================
+3. PENDIENTES (ACTUALIZADO 2026-11-18)
+================================================================================
+
+3.1 SEGURIDAD DEL BACKEND
+--------------------------
+- [HECHO] Autorización explícita ROLE_ADMIN en los endpoints de administración
+  de los microservicios y del administrador RabbitMQ.
+- [HECHO] Administradores creados solo por Cognito o proceso restringido.
+- [POR HACER] Proteger los endpoints internos con un token de servicio
+  (client_credentials) y un rol dedicado. Hoy solo exigen un JWT válido de
+  Cognito, y el comodín ANY /{proxy+} del API Gateway los deja alcanzables
+  desde internet.
+- [POR HACER] Bloquear /api/v1/internal/** en API Gateway, como defensa en
+  profundidad aunque exista el token de servicio.
+- [POR HACER] Validar que avatarKey use el prefijo avatars/, audioKey use
+  audios/ y coverImageKey use covers/.
+- [POR HACER] Validar que la key pertenezca al usuario o a la publicación y
+  que no se pueda reutilizar la de otro usuario.
+- [POR HACER] Validar que el objeto S3 exista antes de asociarlo, si aplica.
+- [POR HACER] Eliminar el avatar de S3 antes de perder la referencia al
+  borrar una cuenta.
+- [POR HACER] Revocar las sesiones activas al banear (AdminUserGlobalSignOut).
+  Hoy un baneado conserva su token válido cerca de una hora.
+- [POR HACER] Revisar la consistencia entre anonimización, base de datos y S3
+  al eliminar una cuenta.
+
+3.2 PRUEBAS Y CI/CD
+-------------------
+- [HECHO] Dependencias de testing reactivadas en ms-users con
+  FollowServiceImplTest (commit 040e25e).
+- [POR HACER] Reactivar las dependencias de testing en ms-auth, ms-posts y
+  ms-interactions (hoy están comentadas).
+- [POR HACER] Pruebas de seguridad JWT, grupos y roles.
+- [POR HACER] Pruebas de auth sync y de endpoints de usuarios.
+- [POR HACER] Pruebas de publicaciones, likes y comentarios.
+- [POR HACER] Pruebas de URLs prefirmadas, validación MIME y claves S3.
+- [POR HACER] Pruebas de CORS y preflight OPTIONS.
+- [POR HACER] Pipeline de GitHub Actions: build, test y publicación de
+  imágenes a Docker Hub.
+- [POR HACER] Ejecutar el build del frontend en CI.
+
+3.3 OPERACIÓN E INFRAESTRUCTURA
+--------------------------------
+- [HECHO] HTTPS en el ALB con certificado ACM.
+- [HECHO] CORS en API Gateway y en los tres buckets S3.
+- [HECHO] Límites de memoria y swap en la EC2.
+- [POR HACER] Rotar la contraseña de Neon y revisar que no haya credenciales
+  en el repositorio.
+- [POR HACER] Definir backups de la base de datos y estrategia de
+  recuperación.
+- [POR HACER] Configurar logs y monitoreo (CloudWatch) de los contenedores.
+- [POR HACER] Dominio personalizado para el frontend, si se decide usarlo.
+
+3.4 FUNCIONALIDADES PENDIENTES
+------------------------------
+- [POR HACER] Eliminar mi cuenta desde la interfaz. El endpoint
+  DELETE /api/v1/users/me existe, pero no hay acción en el frontend.
+- [POR HACER] Likes propios más allá de los primeros 100: /users/me/likes se
+  consulta una sola vez, sin paginar.
+- [POR HACER] Auditoría de baneos: guardar motivo y administrador que lo
+  aplicó, además de la fecha.
+- [POR HACER] Umbral de candidatos a baneo configurable desde el panel (hoy
+  se pasa por query string con valor 10 por defecto).
+- [POR HACER] Respuestas anidadas y reacciones en comentarios. Quedaron fuera
+  del alcance visual acordado.
+- [POR HACER] Limpiar código muerto: data/briefcasts.ts y ms-auth/bin.
+- [DESCARTADO] Edición de comentarios, por decisión del equipo.
+
+3.5 HISTÓRICO YA COMPLETADO (RESUMEN)
+-------------------------------------
+Se cerró todo lo que la versión 1.0 de este documento listaba como POR
+HACER en frontend, integración y AWS:
+
+- Autenticación completa con Amplify y Authenticator (registro,
+  confirmación, login, logout, recuperación de contraseña).
+- AuthContext con sesión persistente, token vigente y cognitoSub expuesto.
+- Guards RequireAuth y RequireRole, con estado de carga y redirección.
+- Cliente HTTP único con interceptor de JWT y errores normalizados.
+- Servicios tipados de auth, users, posts, interactions y upload.
+- Subida directa a S3 de avatar, audio y portada con estados de progreso.
+- Perfil propio y público: edición, avatar, seguidores, seguidos y
+  publicaciones del perfil ajeno.
+- Publicaciones de audio con grabación, límite de 5 minutos, portada,
+  descripción y reproductor persistente.
+- Feed general y personalizado con paginación, likes, comentarios y
+  búsqueda real con debounce.
+- Panel administrativo con reportes de comentarios y publicaciones,
+  moderación de audios, candidatos a baneo, ban, unban y verificación.
+- API pública con API Gateway, ALB con HTTPS, EC2 con Docker, Neon y S3.
+
+3.6 SALAS DE AUDIO EN VIVO Y KAFKA (PENDIENTE)
+----------------------------------------------
+Detalle por tarea, contratos y criterios de aceptación en
+PLAN-IMPLEMENTACION-KAFKA.md (v1.1).
+
+- [POR HACER] Fase 0: completar docker-compose.yml local (RabbitMQ,
+  variables RABBITMQ_* y ms-heypudu-rabbit-admin) y reactivar tests en
+  ms-auth, ms-posts y ms-interactions.
+- [POR HACER] Fase 3: levantar Kafka KRaft local y crear el tópico
+  heypudu.live.events (3 particiones, RF 1, retención 7 días).
+- [POR HACER] Fase 4: productor Kafka en ms-live con clave roomId y
+  publicación tolerante a fallos.
+- [POR HACER] Fase 5: ms-analytics con consumer group live-analytics-group,
+  idempotencia por eventId y endpoint /api/v1/analytics/rooms/{id}/stats.
+- [POR HACER] Fase 6: room.created (notificación a seguidores) y room.closed
+  con cola propia q.heypudu.live.command y su DLQ.
+- [POR HACER] Fase 7: MediaMTX con authMethod http contra ms-live, hooks
+  runOnRead/runOnUnread y HTTPS/WSS.
+- [POR HACER] Fase 8: despliegue en AWS, reglas del ALB, Security Groups y
+  bloqueo de /api/v1/internal/** en API Gateway.
+- [POR HACER] Frontend F1-F5: tipos, liveService, WHIP/WHEP, pantallas,
+  navegación y despliegue en Vercel.
+- [DECISIÓN] Resolver D1-D7 del plan antes de las fases indicadas:
+  persistencia de reacciones, room.created como evento, identidad en
+  MediaMTX, detección de LISTENER_LEFT, KRaft, ms-analytics separado y
+  capacidad de la EC2.
+
+================================================================================
+4. ORDEN RECOMENDADO DE CONSTRUCCIÓN
+================================================================================
+
+FASE 1 — IDENTIDAD Y CONECTIVIDAD (COMPLETA)
+--------------------------------------------
+1. Configurar Cognito y App Client. [HECHO]
+2. Instalar Amplify en el frontend. [HECHO]
+3. Crear /register, /confirm-account y /login. [HECHO]
+4. Implementar AuthContext. [HECHO]
+5. Implementar auth sync. [HECHO]
+6. Crear cliente HTTP con JWT. [HECHO]
+7. Configurar API pública o API Gateway. [HECHO]
+8. Configurar variables de entorno de Vercel. [HECHO]
+
+FASE 2 — PERFIL Y S3 (COMPLETA)
+9. Completar perfil. [HECHO]
+10. Conectar perfil propio. [HECHO]
+11. Implementar subida de avatar. [HECHO]
+12. Verificar CORS de S3. [HECHO en los tres buckets]
+
+FASE 3 — CONTENIDO (COMPLETA)
+13. Conectar feed. [HECHO]
+14. Crear publicación TEXT. [DESCARTADO: la red es solo de audio]
+15. Crear publicación AUDIO. [HECHO]
+16. Implementar grabación. [HECHO]
+17. Implementar audio y portada en S3. [HECHO]
+18. Implementar reproductor. [HECHO]
+
+FASE 4 — INTERACCIONES (COMPLETA)
+19. Implementar likes. [HECHO]
+20. Implementar comentarios. [HECHO]
+21. Implementar follows. [HECHO]
+22. Implementar búsqueda. [HECHO]
+
+FASE 5 — ADMINISTRACIÓN (COMPLETA)
+23. Crear grupo admin en Cognito. [HECHO]
+24. Crear guards de administración. [HECHO]
+25. Crear panel admin. [HECHO]
+26. Aplicar ROLE_ADMIN en backend. [HECHO]
+27. Implementar operaciones de moderación. [HECHO: reportes de comentarios y publicaciones,
+    audios, candidatos a baneo, ban y unban]
+
+FASE 6 — CALIDAD, SEGURIDAD Y PRODUCCIÓN (PENDIENTE)
+----------------------------------------------------
+28. Proteger los endpoints internos con token de servicio. [POR HACER]
+29. Bloquear /api/v1/internal/** en API Gateway. [POR HACER]
+30. Validar claves S3 y eliminar el avatar al borrar la cuenta. [POR HACER]
+31. Revocar sesiones al banear y validar estado en escrituras. [POR HACER]
+32. Reactivar y ampliar las pruebas de backend. [POR HACER]
+33. Configurar CI/CD con GitHub Actions. [POR HACER]
+34. Rotar credenciales, backups y monitoreo. [POR HACER]
+
+FASE 7 — PENDIENTES FUNCIONALES
+-------------------------------
+35. Eliminar mi cuenta desde la interfaz. [POR HACER]
+36. Paginar los likes propios. [POR HACER]
+37. Auditoría de baneos (motivo y autor). [POR HACER]
+38. Umbral de candidatos configurable desde el panel. [POR HACER]
+39. Respuestas anidadas y reacciones en comentarios. [POR HACER]
+40. Limpiar código muerto (data/briefcasts.ts, ms-auth/bin). [POR HACER]
+41. Edición de comentarios. [DESCARTADO por decisión del equipo]
+
+FASE 8 — SALAS DE AUDIO EN VIVO Y KAFKA (PENDIENTE)
+---------------------------------------------------
+42. Completar el entorno local (RabbitMQ en compose y tests). [POR HACER]
+43. Levantar Kafka local y crear heypudu.live.events. [POR HACER]
+44. Publicar LiveRoomEvent desde ms-live. [POR HACER]
+45. Crear ms-analytics y sus métricas por sala. [POR HACER]
+46. Integrar RabbitMQ (room.created / room.closed) y MediaMTX (auth y
+    hooks). [POR HACER]
+47. Construir el frontend de salas (/en-vivo y WHIP/WHEP). [POR HACER]
+48. Desplegar y asegurar la plataforma. [POR HACER]
+
+HECHO
+-----
+- API pública con HTTPS (API Gateway + ALB).
+- Autenticación, perfiles, publicaciones, feed, likes, comentarios y
+  seguimientos conectados al backend.
+- Subida directa a S3 de avatar, audio y portada.
+- Búsqueda real y feed paginado.
+- Reportes de publicaciones y comentarios.
+- Panel admin con moderación de audios, candidatos a baneo, ban y unban.
+- Eliminar publicación propia desde el menú de la tarjeta.
+- Consulta interna `followers/check` y CRUD de `ms-live` (salas en vivo, en
+  curso; ver 2.15).
+
+
+
+================================================================================
+5. CRITERIO PARA MARCAR UNA TAREA COMO HECHA
+================================================================================
+
+Una tarea solo debe pasar de POR HACER a HECHO cuando:
+
+- La implementación existe en el código o infraestructura correspondiente.
+- La funcionalidad fue validada con una prueba o verificación concreta.
+- La documentación relacionada fue actualizada, si corresponde.
+- No depende de una configuración pendiente que impida utilizarla.
+
+Al completar una tarea:
+
+1. Cambiar [POR HACER] por [HECHO].
+2. Moverla a la sección correspondiente de HECHO si ya no necesita seguimiento.
+3. Agregar una nota breve con archivos, endpoint o configuración involucrada.
+4. Registrar cualquier limitación que permanezca pendiente.
+
+
+================================================================================
+FIN DEL ARCHIVO
+================================================================================

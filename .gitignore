@@ -1,0 +1,26 @@
+# Claves privadas: nunca se versionan
+*.pem
+*.key
+*.ppk
+
+# Repositorios anidados (cada uno tiene el suyo)
+heyPudu-backend/
+heyPudu-frontend-web/
+
+# Entornos y secretos
+.env
+.env.*
+*.env
+live-prod.env
+
+# Sistema
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Node (por si se añade tooling de documentación)
+node_modules/
+
+# Editores
+.vscode/
+.idea/

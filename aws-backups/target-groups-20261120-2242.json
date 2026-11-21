@@ -1,0 +1,100 @@
+﻿{
+    "TargetGroups": [
+        {
+            "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-auth-tg/10bf0d7ba37fb2c5",
+            "TargetGroupName": "heypudu-auth-tg",
+            "Protocol": "HTTP",
+            "Port": 8081,
+            "VpcId": "vpc-01d7e3a0ac03ac7fa",
+            "HealthCheckProtocol": "HTTP",
+            "HealthCheckPort": "traffic-port",
+            "HealthCheckEnabled": true,
+            "HealthCheckIntervalSeconds": 30,
+            "HealthCheckTimeoutSeconds": 5,
+            "HealthyThresholdCount": 5,
+            "UnhealthyThresholdCount": 2,
+            "HealthCheckPath": "/actuator/health",
+            "Matcher": {
+                "HttpCode": "200"
+            },
+            "LoadBalancerArns": [
+                "arn:aws:elasticloadbalancing:us-east-1:561816430875:loadbalancer/app/heypudu-alb/b44b95e6278e3e8f"
+            ],
+            "TargetType": "instance",
+            "ProtocolVersion": "HTTP1",
+            "IpAddressType": "ipv4"
+        },
+        {
+            "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+            "TargetGroupName": "heypudu-interactions-tg",
+            "Protocol": "HTTP",
+            "Port": 8084,
+            "VpcId": "vpc-01d7e3a0ac03ac7fa",
+            "HealthCheckProtocol": "HTTP",
+            "HealthCheckPort": "traffic-port",
+            "HealthCheckEnabled": true,
+            "HealthCheckIntervalSeconds": 30,
+            "HealthCheckTimeoutSeconds": 5,
+            "HealthyThresholdCount": 5,
+            "UnhealthyThresholdCount": 2,
+            "HealthCheckPath": "/actuator/health",
+            "Matcher": {
+                "HttpCode": "200"
+            },
+            "LoadBalancerArns": [
+                "arn:aws:elasticloadbalancing:us-east-1:561816430875:loadbalancer/app/heypudu-alb/b44b95e6278e3e8f"
+            ],
+            "TargetType": "instance",
+            "ProtocolVersion": "HTTP1",
+            "IpAddressType": "ipv4"
+        },
+        {
+            "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-posts-tg/c011b45b2364b8cc",
+            "TargetGroupName": "heypudu-posts-tg",
+            "Protocol": "HTTP",
+            "Port": 8083,
+            "VpcId": "vpc-01d7e3a0ac03ac7fa",
+            "HealthCheckProtocol": "HTTP",
+            "HealthCheckPort": "traffic-port",
+            "HealthCheckEnabled": true,
+            "HealthCheckIntervalSeconds": 30,
+            "HealthCheckTimeoutSeconds": 5,
+            "HealthyThresholdCount": 5,
+            "UnhealthyThresholdCount": 2,
+            "HealthCheckPath": "/actuator/health",
+            "Matcher": {
+                "HttpCode": "200"
+            },
+            "LoadBalancerArns": [
+                "arn:aws:elasticloadbalancing:us-east-1:561816430875:loadbalancer/app/heypudu-alb/b44b95e6278e3e8f"
+            ],
+            "TargetType": "instance",
+            "ProtocolVersion": "HTTP1",
+            "IpAddressType": "ipv4"
+        },
+        {
+            "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-users-tg/b745eb20fad58ff4",
+            "TargetGroupName": "heypudu-users-tg",
+            "Protocol": "HTTP",
+            "Port": 8082,
+            "VpcId": "vpc-01d7e3a0ac03ac7fa",
+            "HealthCheckProtocol": "HTTP",
+            "HealthCheckPort": "traffic-port",
+            "HealthCheckEnabled": true,
+            "HealthCheckIntervalSeconds": 30,
+            "HealthCheckTimeoutSeconds": 5,
+            "HealthyThresholdCount": 5,
+            "UnhealthyThresholdCount": 2,
+            "HealthCheckPath": "/actuator/health",
+            "Matcher": {
+                "HttpCode": "200"
+            },
+            "LoadBalancerArns": [
+                "arn:aws:elasticloadbalancing:us-east-1:561816430875:loadbalancer/app/heypudu-alb/b44b95e6278e3e8f"
+            ],
+            "TargetType": "instance",
+            "ProtocolVersion": "HTTP1",
+            "IpAddressType": "ipv4"
+        }
+    ]
+}

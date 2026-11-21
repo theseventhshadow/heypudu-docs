@@ -1,0 +1,346 @@
+Ya lo leí completo, incluida la imagen de arquitectura de la sección 3 (que no era texto, era un diagrama). Te lo resumo antes de proponer nada.
+
+Qué es
+La guía de la Evaluación Parcial N.° 2 de DSY1107 Desarrollo Cloud Native I. Vale 30 % de la asignatura, con dos partes:
+
+Parte	Peso	Formato
+Encargo	40 % de la EP2	En parejas, código en GitHub
+Presentación	60 % de la EP2	Individual, 5–10 min, defensa + demo
+Plazo: 2 semanas desde el taller.
+
+El tema: mensajería asíncrona con RabbitMQ
+
+Nota: las decisiones y pruebas de las primeras secciones son un registro
+histórico de la implementación. El estado vigente se encuentra al final del
+archivo, en la sección `ESTADO VIGENTE — 2026-11-02`.
+El RA2 es "desarrolla soluciones utilizando colas para trabajar con mensajes asincrónicos". La EP2 continúa sobre la EP1 y añade una capa de mensajería para absorber cargas grandes sin bloquear al usuario.
+
+Lo que hay que construir encima de lo que ya tienes:
+
+Clúster RabbitMQ de 2 nodos (rabbit1, rabbit2) levantado con Docker Compose en la nube (AWS EC2).
+Tres colas funcionales, cada una con su DLQ (en el diagrama: q.<caso>.command, q.<caso>.notification, q.<caso>.audit).
+Exchanges direct y topic con routing keys y bindings; más un dlx.
+Productores y consumidores con @RabbitListener agrupados por dominio, ACK manual y NACK sin requeue hacia la DLQ, con sus mensajes registrados en logs.
+Microservicio administrador ms-<caso>-rabbit-admin: API REST para crear/eliminar colas, exchanges y bindings, con RabbitAdminService y validación (@Valid). Solo Admin.
+Políticas de retención y limpieza (límites de cola, TTL) y saber explicar las métricas del Management UI.
+La arquitectura esperada
+Frontend Angular + MSAL → Microsoft Entra ID (PKCE) → AWS API Gateway (JWT authorizer) → BFF (revalida JWT y autoriza por rol) → tres microservicios:
+
+ms-<caso>-principal → publica
+ms-<caso>-catalog → consume
+ms-<caso>-rabbit-admin → administra la topología
+...conectados al clúster RabbitMQ y con una Oracle Cloud DB debajo. Reglas explícitas: el BFF no accede a la BD.
+
+La parte que te afecta de verdad
+Hay tres choques frontales con tu proyecto actual:
+
+EP2 exige	heyPudú tiene hoy
+Microsoft Entra ID + MSAL	AWS Cognito + Amplify
+Angular	React + TypeScript
+BFF como capa separada	No existe: el frontend llama directo al API Gateway
+AWS API Gateway	Ya lo tienes ✔
+BD Oracle Cloud	PostgreSQL en Neon
+Y el checklist lo confirma: "La EP1 sigue operativa: login con Entra ID".
+
+Antes de seguir, necesito entender tu situación
+No quiero asumir nada, porque de esto depende si el plan es razonable o absurdo:
+
+¿La EP1 la hiciste con heyPudú o con otro proyecto distinto? Lo pregunto porque la guía habla de Angular + Entra ID + Oracle, y heyPudú es React + Cognito + Neon.
+¿La evaluación pide estos repos separados (frontend, BFF, principal, catálogo, admin) sobre el mismo caso, o puedes adaptar heyPudú como "el caso"?
+¿Cuánto tiempo tienes y es en parejas? ¿La otra persona ya tiene algo hecho?
+Mi lectura preliminar: lo reutilizable de heyPudú es mucho (el API Gateway, los microservicios Spring Boot, las entidades/repositorios, los filtros JWT, el patrón de servicios), y lo nuevo es la capa RabbitMQ completa. Pero el desajuste Angular/React y Entra ID/Cognito hay que resolverlo con una decisión consciente tuya, no por mi cuenta.
+
+11:29 AM
+3m 48s
+•
+DeepSeek/DeepSeek V4 Flash (deepseek-v4-flash) • 0 credits
+Hay cosas que la EP2 exige de forma bastante generalizada, como los puntos que me mencionas (EntraID, Angular, BFF, OracleDB), pero no hay problemas en usar tecnologias similares. Está permitido dentro de la evaluacion con el permiso del profesor (permiso que ya tengo). Por lo anterior, no hay problemas en usar el proyecto actual, que ya responde a la EP1. Sé que falta el BFF, pero eso lo dejaré fuera por el momento.
+En una corta respuesta: Te parece bien? Que pasos deberiamos seguir preliminarmente?
+
+11:34 AM
+Sí, me parece bien. Y hay un argumento que además te sirve en la defensa: la EP2 no exige inventar un caso nuevo, exige mensajería asíncrona real sobre el dominio del caso. heyPudú ya cubre por sí solo casi todo el checklist de "EP1 sigue operativa" (JWT, rutas protegidas, roles con diferencias reales, gateway, microservicios, BD cloud). Lo que falta es una sola capa nueva: RabbitMQ, más un microservicio administrador.
+
+Sobre el BFF: al dejarlo fuera, ten claro qué dirás en la defensa. La rúbrica pide "autorización por rol en el BFF"; hoy ese control vive en el microservicio con @PreAuthorize("hasRole('ADMIN')"). Es equivalente en efecto, solo cambia dónde se aplica.
+
+El primer paso real: elegir los 3 flujos
+Es la decisión que condiciona todo lo demás. Mi propuesta es que no sean inventados, sino tres huecos que heyPudú ya tiene:
+
+Cola	Flujo	Hoy en heyPudú	Por qué asíncrono
+q.command (direct)	Al borrar una publicación, borrar sus interacciones	Llamada REST sincrónica InteractionClient — si ms-interactions está caído, el borrado falla	El usuario no debe esperar ni fallar por un servicio secundario
+q.notification (topic)	Like, comentario o follow → avisar al autor	No existe (por eso quitamos el corazón de la topbar)	Un like no debe bloquear la respuesta
+q.audit (topic)	Reportes, baneos y eliminaciones	No existe (estaba en la lista de pendientes)	Registrar no debe afectar la operación
+Así cada cola tiene un productor y un consumidor reales, y el direct vs topic se justifica por diseño: el comando va a un destino único, los eventos se difunden a varios interesados.
+
+Un riesgo que hay que mirar antes de escribir código
+Tu EC2 es t3.small con 2 GB y ya sostiene 4 microservicios con swap. La EP2 suma 2 nodos RabbitMQ + 1 microservicio admin. Eso probablemente no cabe. Hay que decidir entre subir a t3.medium, apretar los límites de memoria, o mover el clúster a otra instancia. Es mejor saberlo ahora que a mitad de camino.
+
+Pasos preliminares que propongo
+Cerrar el reparto de las 3 colas (la tabla de arriba).
+Medir memoria en la EC2 (docker stats + free -m) y decidir el tamaño de instancia.
+Clúster RabbitMQ en local primero (docker-compose.yml con rabbit1, rabbit2, HA policies), validar cluster_status.
+Repetir en la EC2 con docker-compose.prod.yml.
+Clases de configuración (Queue, TopicExchange, DirectExchange, Binding, DLX) centralizadas y separadas de la lógica.
+Productor y consumidor del q.command primero, porque reemplaza una llamada REST que ya existe y es lo más fácil de demostrar.
+ms-<caso>-rabbit-admin al final, con RabbitAdminService y @Valid.
+Question:
+Reparto de las tres colas
+Question:
+Por dónde empezar
+Sí, es correcto — y además es la mejor opción frente a meterlo en la instancia actual. Pero hay tres cosas donde "misma VPC" no es suficiente, y conviene resolverlas antes de crear nada.
+
+1. La VPC no abre puertos: lo hacen los Security Groups
+Estar en la misma VPC da enrutamiento, no permiso. Necesitas:
+
+Puerto	Uso	Origen permitido
+5672	AMQP (microservicios ↔ broker)	SG de la instancia de microservicios
+15672	Management UI (demo y defensa)	Tu IP
+4369	Erlang epmd (descubrimiento del clúster)	Entre los dos nodos
+25672	Erlang distribution (clúster)	Entre los dos nodos
+Los dos últimos son los que la gente olvida: sin ellos los nodos no se ven y cluster_status muestra dos nodos sueltos. Como los dos nodos irían en la misma instancia, basta con que se hablen por la red interna de Docker, pero si algún día los separas, esos puertos tienen que estar abiertos.
+
+Importante: RabbitMQ no pasa por el API Gateway ni por el ALB. El tráfico AMQP es interno; la Management UI se abre por IP directa (restringida a tu IP) o por túnel SSH.
+
+2. Dos nodos en una instancia sí cumple lo que pide la guía
+La guía dice textualmente "dos nodos RabbitMQ (rabbit1 y rabbit2) unidos en un clúster" y "clúster levantado en la nube (AWS EC2) mediante Docker Compose" — singular, y en la presentación: "ejecución de docker-compose levantando los servicios de RabbitMQ". Dos contenedores rabbit1 + rabbit2 en una instancia es exactamente eso.
+
+Prepárate igual para una pregunta incómoda en la defensa: "si la instancia muere, muere el clúster, ¿dónde está la alta disponibilidad?". La respuesta honesta: la EP2 evalúa clustering y mensajería asíncrona, no HA física; separar los nodos en dos instancias no requiere cambiar la configuración, solo el compose. Tenla lista.
+
+3. Dos detalles que rompen el clúster si se pasan por alto
+Cookie de Erlang idéntica en ambos nodos (RABBITMQ_ERLANG_COOKIE). Si difieren, no se unen jamás.
+hostname fijo por servicio en el compose, porque el nombre del nodo Erlang se deriva de él (rabbit@rabbit1, rabbit@rabbit2).
+Y una decisión de diseño que impacta directo en la pregunta P2 de la defensa ("¿qué se comparte y dónde vive el contenido de una cola?"): con RabbitMQ moderno el espejado clásico está retirado. Con 2 nodos, o usas colas clásicas (el contenido vive en el nodo que la declaró) o quorum queues (replicadas por Raft, pero con 2 nodos pierdes mayoría si cae uno). Para el examen lo más claro es quorum queues y poder explicar ese matiz.
+
+Siguiente paso que propongo
+Antes de tocar AWS: levantar el clúster en local con docker-compose.yml (rabbit1 + rabbit2 + Management UI), verificar rabbitmqctl cluster_status con los dos nodos en running_nodes, y recién entonces replicarlo en la instancia nueva con el compose de producción. Así el debugging de red ocurre en tu máquina y no en AWS.
+
+Question:
+Por dónde arrancamos
+Question:
+Tipo de cola
+Empiezo por el clúster local. Primero reviso las convenciones del compose actual para no romper nada.
+
+Clúster local. Creo el compose dedicado (servirá igual para la instancia aparte en AWS).
+
+Edited
+ docker-compose.rabbit.yml+94-0
+Corrijo una línea inválida que dejé al inicio y fuerzo finales de línea LF en los archivos que se montan en Linux.
+
+Compose válido. Levanto el clúster (la primera vez descarga la imagen).
+
+Clúster formado con los dos nodos en running_nodes. Ahora compruebo que las quorum queues se replican de verdad.
+
+La cola se declaró como classic, no quorum: el default_queue_type del conf no se aplicó. Lo investigo.
+
+PowerShell está destrozando las comillas. Uso la API HTTP desde el host.
+
+Confirmado: default_queue_type = quorum sí funciona (la que declaré sin tipo salió quorum con 2 miembros). El classic anterior lo forzaba rabbitmqadmin. Limpio las pruebas y mido memoria, que te sirve para dimensionar la instancia.
+
+Clúster local funcionando y verificado.
+
+Resultado
+
+Nodo	AMQP	Management UI	Memoria
+rabbit@rabbit1	localhost:5672	localhost:15672	141 MB
+rabbit@rabbit2	localhost:5673	localhost:15673	126 MB
+Quorum queues replicadas, comprobado declarando una cola y consultándola desde el otro nodo:
+
+
+Los dos miembros en cada cola es la evidencia directa para la pregunta P2 de la defensa ("¿qué se comparte y dónde vive el contenido de una cola?"): con quorum, el contenido vive replicado en ambos nodos vía Raft, no en uno solo.
+
+Hallazgos que conviene que sepas
+El dimensionamiento no era problema. Antes te advertí que 2 nodos + admin no cabrían en la t3.small. Medido en real: el clúster completo consume ~270 MB. Una t3.micro (1 GB) dedicada va sobrada. Mi advertencia anterior era demasiado pesimista.
+
+Trampa con rabbitmqadmin: declara las colas como classic aunque tengas default_queue_type = quorum configurado. Me pasó y por eso verifiqué por HTTP API, donde sí respetó el valor. Si en la demo usas rabbitmqadmin, pasa x-queue-type explícito.
+
+Puertos duplicados a propósito: expuse rabbit2 en 5673/15673 para poder responder a P1 ("¿cómo comprueba que ambos nodos están operativos y accesibles de forma independiente?"). Puedes abrir localhost:15673 y ver el overview de rabbit@rabbit2.
+
+Archivos creados (sin commitear)
+Archivo	Contenido
+docker-compose.rabbit.yml	rabbit1, rabbit2 y un contenedor de un solo uso que los une
+rabbit/cluster-init.sh	Une rabbit2 al clúster, idempotente
+rabbit/conf/10-heypudu.conf	default_queue_type = quorum
+Los tres con finales de línea LF (CRLF habría roto el #!/bin/sh).
+
+El clúster sigue corriendo en tu máquina. Para detenerlo: docker compose -f docker-compose.rabbit.yml down (los datos persisten en volúmenes; con down -v se borran).
+
+Siguiente paso
+Definir la topología en el código: exchanges direct y topic, dlx, las 3 colas con sus 3 DLQ, y los Binding — todo en clases @Configuration separadas de la lógica, con los nombres centralizados en application.yml.
+
+Question:
+Próximo paso
+Question:
+Nomenclatura de exchanges y colas
+Sí, es correcto, y lo recomiendo. Tres razones:
+
+La rúbrica no pide un repo para RabbitMQ. Los "repositorios separados" que exige son frontend, BFF, microservicio principal, catálogo y administrador. El clúster es infraestructura, no un repo evaluable.
+
+No hay riesgo de desplegar microservicios por error. En la instancia dedicada clonas el mismo repo y ejecutas solo docker-compose.rabbit.yml. El compose por defecto (el de los 4 servicios) nunca se invoca ahí, así que no se construye ni se levanta nada de Java.
+
+Una sola fuente de verdad. El mismo archivo describe el clúster en local y en la nube. Si lo duplicas en otro repo, tarde o temprano divergen (una cookie distinta, un puerto cambiado) y el fallo aparece solo en producción.
+
+Detalle práctico: el .gitignore ya excluye .env, así que la cookie y la contraseña no se suben. Los dos archivos que creé están sin trackear pero no ignorados, listos para commitear.
+
+Si más adelante prefieres separarlo, es mover dos rutas (docker-compose.rabbit.yml y rabbit/) a otro repo. Sin drama.
+
+Topología que propongo (nombres heypudu)
+Exchange	Tipo	Cola	DLQ
+ex.heypudu.cmd	direct	q.heypudu.command	q.heypudu.command.dlq
+ex.heypudu.events	topic	q.heypudu.notification	q.heypudu.notification.dlq
+ex.heypudu.events	topic	q.heypudu.audit	q.heypudu.audit.dlq
+Routing keys: post.delete (command); interaction.* y user.followed (events). El dlx es ex.heypudu.dlx (direct), y cada cola lo referencia con su routing key .dlq.
+
+Antes de escribir las clases @Configuration necesito cerrar una decisión, porque determina cuántos servicios toco:
+
+Question:
+Ubicación de los consumidores
+Question:
+¿Reemplaza o convive con el REST actual?
+Decisiones cerradas. Implemento la topología. Reviso estilos y dependencias existentes.
+
+Antes de escribir el código, compruebo empíricamente qué argumentos acepta una quorum queue en este broker (así no escribo algo que falle al arrancar).
+
+Todos los argumentos que necesito son válidos en quorum. Escribo la topología.
+
+Compila. Ahora valido la topología contra el clúster real, replicando exactamente los argumentos que envía Spring.
+
+Routing por patrón perfecto: interaction.deleted fue a audit pero no a notification. Ahora pruebo el dead-lettering.
+
+Dead-lettering confirmado: q.heypudu.command pasó de 1 → 0 y q.heypudu.command.dlq de 0 → 1. Limpio los mensajes de prueba.
+
+Topología implementada y validada contra el clúster real.
+
+Lo que quedó creado
+RabbitTopology.java — todos los nombres en constantes, cero literales dispersos por la lógica.
+
+RabbitTopologyConfig.java — beans Queue, DirectExchange, TopicExchange y Binding.
+
+application.yml — conexión, acknowledge-mode: manual, default-requeue-rejected: false, y TTL/límite/reintentos parametrizados por variable de entorno.
+
+Validación contra el clúster (no solo compilación)
+Declaré la topología y publiqué cuatro mensajes. El resultado demuestra las dos semánticas de exchange:
+
+Cola	Mensajes	Por qué
+q.heypudu.command	1	solo post.delete por el exchange direct
+q.heypudu.notification	2	interaction.liked + user.followed
+q.heypudu.audit	3	los tres, por los comodines interaction.* y user.#
+El detalle que vale oro para la defensa: interaction.deleted llegó a audit pero no a notification. Eso demuestra routing por patrón real, no dos colas que reciben lo mismo. Es exactamente la pregunta P6.
+
+Y el dead-lettering, probado con un rechazo real:
+
+
+Las seis colas quedaron purgadas y las tres son quorum con dos miembros (replicadas).
+
+Dos hallazgos técnicos
+Los argumentos que quería son válidos en quorum. Los probé uno por uno antes de escribir código (x-message-ttl, x-max-length, x-overflow=reject-publish, x-delivery-limit, x-dead-letter-*). Así el arranque no falla por un argumento no soportado.
+
+x-delivery-limit=3 te da los "reintentos acotados" que pide la rúbrica sin escribir código: tras 3 entregas fallidas el mensaje va solo a la DLQ.
+
+Pendiente inmediato
+Esto está solo en ms-posts. Falta:
+
+Replicar la topología en ms-interactions y ms-users (cada uno declara lo que usa).
+El productor del post.delete en ms-posts, reemplazando la llamada REST actual.
+El @RabbitListener con ACK manual en ms-interactions.
+Consumers de notification y audit, y el microservicio admin.
+Nada de esto está commiteado todavía: docker-compose.rabbit.yml, rabbit/ y los cambios de ms-posts están sin trackear o modificados.
+
+Question:
+Próximo paso
+Ahora el productor en ms-posts y el consumidor en ms-interactions.
+
+Edited
+ DeadLetterListener.java+58-0
+Ahora la dependencia y la configuración en ms-interactions.
+
+Compilan los dos. Antes de probar en caliente, hay un problema real: el productor y el consumidor usan clases distintas para el mismo mensaje. Lo verifico y lo corrijo.
+
+Corrijo el converter para que el consumidor use el tipo de su propio método y no el nombre de clase del productor.
+
+Ahora la prueba en caliente: levanto Postgres local y corro ms-interactions para verificar el consumo real.
+
+El servicio arrancó y se conectó al broker. Ahora pruebo el flujo real: inserto un comentario y publico el comando.
+
+Consumido y confirmado: el comentario pasó de 1 a 0 filas y la cola quedó vacía con el consumidor conectado. Verifico el log y pruebo la ruta de fallo.
+
+Hay un fallo real que debo entender: el listener de la DLQ lanzó una excepción. Leo el detalle.
+
+Encontrado y es un bug real: Spring no entrega el Message crudo, intenta convertir el cuerpo al tipo del parámetro. Por eso el listener de la DLQ explotaba con el mensaje que precisamente no se puede deserializar. Lo corrijo.
+
+La DLQ no se está consumiendo (1 → 2). Reviso el arranque.
+
+Sigue fallando: byte[] no evita la conversión Jackson. La solución correcta es un container factory propio para las DLQ, con un converter que no intente deserializar.
+
+El log de la DLQ ya funciona. Hago una pasada final limpia con ambas rutas.
+
+Productor y consumidor del q.command funcionando verificado en caliente, no solo compilado.
+
+Flujo validado
+Prueba	Resultado
+Insertar comentario → publicar post.delete	Fila 1 → 0, cola vacía, ACK registrado
+Publicar payload inválido	Rechazado → DLQ → log → ACK, cola a 0
+Log del consumidor	Interacciones de la publicacion 1111… eliminadas
+Log de la DLQ	MENSAJE NO ENTREGADO en q.heypudu.command.dlq | origen=q.heypudu.command | motivo=rejected | payload=esto-no-es-json
+Dos bugs reales que encontré probando (no compilando)
+1. El __TypeId__ rompía el consumo entre servicios.
+El productor publica com.heypudu.ms_posts.messaging.PostDeletedMessage, pero el consumidor tiene su propio espejo en otro paquete. Con el converter por defecto, el consumidor intenta cargar la clase del productor y falla. Lo resolví forzando TypePrecedence.INFERRED: el tipo se deduce del parámetro del @RabbitListener, así que el contrato es el JSON, no el nombre de clase. Esto es exactamente lo que hay que poder explicar en la defensa cuando pregunten por desacoplamiento.
+
+2. El listener de la DLQ se comía los mensajes sin registrarlos.
+Este era grave y silencioso. Un mensaje llega a la DLQ porque no se pudo deserializar; si el listener de la DLQ usa el mismo converter JSON, vuelve a fallar, Spring lo marca como error fatal y lo descarta. La cola de la DLQ seguía subiendo (1 → 2) y el log mostraba x-death header detected on a message with a fatal exception; perhaps requeued from a DLQ? - discarding. Es decir: perdía mensajes y no dejaba evidencia, justo lo contrario de lo que evalúa la rúbrica.
+Lo corregí con un dlqContainerFactory propio usando SimpleMessageConverter, que no interpreta el cuerpo. Por eso el listener recibe byte[].
+
+Sin ejecutar esto, ambos habrían aparecido en la demo delante del profesor.
+
+Archivos
+ms-posts: PostDeletedMessage, PostEventPublisher, RabbitTopology, RabbitTopologyConfig, RabbitJsonConfig, Jackson2JsonMessageConverterFactory; InteractionClient eliminado (el REST se reemplazó).
+
+ms-interactions: los mismos de topología, PostDeletedMessage, PostCommandListener (ACK/NACK manual), DeadLetterListener, RabbitListenerConfig.
+
+Estado del entorno
+Clúster RabbitMQ: sigue arriba (rabbit1 y rabbit2, healthy).
+Postgres local: detenido (lo había levantado solo para la prueba).
+En esa sesión, las 6 colas quedaron purgadas y los cambios aún no estaban
+publicados.
+
+Actualización 2026-11-01
+Se agregó la dependencia AMQP, la topología de notificaciones y los listeners
+de notification/DLQ en ms-users. También se conectaron ms-users, ms-posts y
+ms-interactions a la red externa heypudu-rabbit-net en docker-compose.prod.yml,
+usando rabbit1 como endpoint AMQP.
+
+Decisión de despliegue AWS
+RabbitMQ se ejecutará en una EC2 separada tipo t3.small, en us-east-1, con
+rabbit1 y rabbit2 como contenedores del mismo clúster. La EC2 backend se
+conectará mediante la IP privada o DNS privado de la EC2 RabbitMQ, no mediante
+la red Docker local heypudu-rabbit-net.
+
+El Security Group RabbitMQ permitirá el puerto 5672 únicamente desde el
+Security Group backend (nombre backend, ID sg-03921fd5c90ae52ec). Los puertos
+4369 y 25672 serán internos para el clúster. El puerto 15672 no se expondrá
+públicamente: la Management UI se abrirá mediante un túnel SSH a través de la
+EC2 backend, porque la IP pública de AWS Academy cambia entre sesiones.
+
+La EC2 RabbitMQ no tendrá Elastic IP. El acceso administrativo inicial se hará
+con AWS Systems Manager Session Manager, mediante un IAM Role con
+AmazonSSMManagedInstanceCore, evitando abrir SSH públicamente.
+
+Estado histórico al cierre de esa sesión:
+- Faltaba el consumidor de audit en ms-posts.
+- Faltaba probar el productor desde ms-posts real.
+- Faltaba ms-heypudu-rabbit-admin.
+- Faltaba publicar los cambios.
+
+ESTADO VIGENTE — 2026-11-02
+---------------------------
+- El consumidor de auditoría de `ms-posts` está implementado.
+- El productor real de `post.delete` y el consumidor de `ms-interactions`
+  están integrados.
+- `ms-users` consume `interaction.liked`, `interaction.commented` y
+  `user.followed`, y persiste notificaciones.
+- `ms-heypudu-rabbit-admin` está implementado en `8085` y protegido con
+  `ROLE_ADMIN`.
+- La topología incluye tres colas funcionales y sus DLQ:
+  `q.heypudu.command`, `q.heypudu.notification` y `q.heypudu.audit`.
+- RabbitMQ está desplegado en una EC2 separada con `rabbit1` y `rabbit2`.
+- Los README de backend y servicios fueron actualizados.
+- Los cambios fueron publicados en `develop` y fusionados en `main` en los
+  repositorios de frontend y backend.

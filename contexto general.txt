@@ -1,0 +1,922 @@
+================================================================================
+heyPudú! — Documento Maestro del Proyecto
+================================================================================
+Versión: 1.2
+Propósito: Contexto completo para que cualquier IA o desarrollador pueda
+retomar el proyecto sin información adicional.
+Última actualización: 2026-10-29
+
+
+================================================================================
+1. VISIÓN GENERAL
+================================================================================
+
+heyPudú! es una red social de audio breve. Los usuarios publican "briefcasts":
+audios de máximo 5 minutos, con título, portada opcional y texto descriptivo
+opcional. La red social es exclusivamente de audio: no se publican textos sin
+audio. También pueden dar likes, comentar, seguir a otros usuarios y buscar
+contenido.
+
+El sistema está construido con una arquitectura de microservicios en Spring
+Boot, desplegado en AWS, autenticado con AWS Cognito, y con un frontend en
+React.
+
+
+================================================================================
+2. STACK TECNOLÓGICO
+================================================================================
+
+BACKEND
+-------
+- Lenguaje: Java 25
+- Framework: Spring Boot 3.5.0
+- Build: Gradle 8.10.2+
+- Seguridad: Spring Security + OAuth2 Resource Server
+- Persistencia: Spring Data JPA + PostgreSQL 16
+- Migraciones: Flyway
+- Cliente HTTP: RestClient (Spring 6.1+)
+- Almacenamiento: AWS S3 (URLs prefirmadas)
+- Autenticación: AWS Cognito
+- Monitoreo: Spring Boot Actuator
+- SDK AWS: awssdk 2.28.29 (BOM)
+
+FRONTEND
+--------
+- React 19 + TypeScript 5 + Vite 6
+- React Router v7
+- AWS Amplify v6 (@aws-amplify/ui-react) para Cognito
+- axios con interceptor de JWT
+- CSS propio por capas (base, layout, componentes, páginas, responsive)
+- Context API para auth y reproductor
+
+INFRAESTRUCTURA
+---------------
+- AWS EC2 para microservicios (Docker)
+- PostgreSQL administrado en Neon (un esquema por microservicio)
+- AWS S3 (3 buckets: audio, covers, avatars)
+- AWS Cognito (1 User Pool)
+- ALB con HTTPS + AWS API Gateway (enrutamiento y validación de JWT)
+- Vercel para el frontend
+- GitHub Actions (CI/CD, pendiente)
+- Docker + Docker Compose (desarrollo local)
+
+
+================================================================================
+3. ARQUITECTURA GENERAL
+================================================================================
+
+  [React + AWS Amplify]
+          |
+          | JWT (Authorization: Bearer <token>)
+          v
+  [AWS API Gateway]  <-- valida el JWT contra Cognito
+          |
+          +-----------+-----------+-------------+------------------+------------+
+          v           v           v             v                  v
+      [ms-auth]   [ms-users]  [ms-posts]  [ms-interactions] [rabbit-admin]
+       :8081       :8082       :8083         :8084             :8085
+          |           |           |             |
+          v           v           v             v
+      [auth_db]   [users_db]  [posts_db]  [interactions_db]
+                                  |
+                                  v
+                         [S3: audio, covers]
+
+                    [RabbitMQ: rabbit1 + rabbit2]
+                         /       |        \
+                 post.delete  eventos   auditoría
+
+  [ms-users] ---> [ms-auth]         (disable/enable/delete en Cognito)
+  [ms-users] ---> [ms-posts]        (conteo de reportes por autor)
+  [ms-users] ---> [ms-interactions] (conteo de reportes por autor)
+  [ms-posts] ---> [ms-users]        (datos del autor, seguidos, post-count)
+  [ms-posts] ---> [RabbitMQ]        (publicar post.delete)
+  [RabbitMQ] ---> [ms-interactions] (eliminar interacciones)
+  [ms-interactions] ---> [RabbitMQ] (likes y comentarios)
+  [ms-users] ---> [RabbitMQ]         (user.followed)
+  [RabbitMQ] ---> [ms-users]         (persistir notificaciones)
+  [RabbitMQ] ---> [ms-posts]         (auditoría)
+  [ms-interactions] ---> [ms-posts] (validar post, actualizar contadores)
+
+
+================================================================================
+4. MICROSERVICIOS
+================================================================================
+
++------------------+--------+----------------------+--------------------------------+
+| Microservicio    | Puerto | Esquema BD           | Responsabilidad                |
++------------------+--------+----------------------+--------------------------------+
+| ms-auth          | 8081   | heypudu_auth         | Auth sync, Cognito admin       |
+| ms-users         | 8082   | heypudu_users        | Perfiles, follows, baneos      |
+| ms-posts         | 8083   | heypudu_posts        | Publicaciones, feed, S3,       |
+|                  |        |                      | reportes                       |
+| ms-interactions  | 8084   | heypudu_interactions | Likes, comentarios y reportes  |
+| ms-heypudu-rabbit-admin | 8085 | sin BD propia | Administración de RabbitMQ |
++------------------+--------+----------------------+--------------------------------+
+
+Cada microservicio es un proyecto Spring Boot INDEPENDIENTE con:
+- Su propio build.gradle y settings.gradle
+- Su propia clase @SpringBootApplication
+- Su propio Dockerfile
+- Su propia configuración (application*.yml)
+
+
+================================================================================
+5. MODELO DE DATOS
+================================================================================
+
+ESQUEMA heypudu_auth (ms-auth)
+------------------------------
+Tabla auth_users:
+- id           UUID PK
+- cognito_sub  UUID NOT NULL UNIQUE
+- email        VARCHAR(255) NOT NULL
+- status       VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'  (ACTIVE|BANNED|DELETED)
+- created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+
+ESQUEMA heypudu_users (ms-users)
+--------------------------------
+Tabla users:
+- id                   UUID PK
+- cognito_sub          UUID NOT NULL UNIQUE
+- name                 VARCHAR(100) NOT NULL
+- username             VARCHAR(50) NOT NULL UNIQUE
+- bio                  VARCHAR(300)
+- avatar_key           VARCHAR(500)
+- is_verified          BOOLEAN NOT NULL DEFAULT FALSE
+- status               VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
+- follower_count       INTEGER NOT NULL DEFAULT 0
+- following_count      INTEGER NOT NULL DEFAULT 0
+- post_count           INTEGER NOT NULL DEFAULT 0
+- username_updated_at  TIMESTAMPTZ
+- anonymized_at        TIMESTAMPTZ
+- created_at           TIMESTAMPTZ NOT NULL
+- updated_at           TIMESTAMPTZ NOT NULL
+
+Tabla follows:
+- id           UUID PK
+- follower_id  UUID NOT NULL
+- followed_id  UUID NOT NULL
+- created_at   TIMESTAMPTZ NOT NULL
+- UNIQUE (follower_id, followed_id)
+- CHECK (follower_id <> followed_id)
+
+ESQUEMA heypudu_posts (ms-posts)
+--------------------------------
+Tabla posts:
+- id                       UUID PK
+- author_id                UUID NOT NULL
+- author_username          VARCHAR(50) NOT NULL
+- author_name              VARCHAR(80)  (nombre visible; nulo en las
+                            publicaciones anteriores a la migración V5)
+- author_avatar_url        VARCHAR(500)
+- type                     VARCHAR(20) NOT NULL  (TEXT|AUDIO)
+- title                    VARCHAR(50) NOT NULL
+- content                  TEXT
+- audio_key                VARCHAR(500)
+- audio_duration_seconds   INTEGER  (1-300)
+- cover_image_key          VARCHAR(500)
+- like_count               INTEGER NOT NULL DEFAULT 0
+- comment_count            INTEGER NOT NULL DEFAULT 0
+- created_at               TIMESTAMPTZ NOT NULL
+- updated_at               TIMESTAMPTZ NOT NULL
+
+ESQUEMA heypudu_interactions (ms-interactions)
+----------------------------------------------
+Tabla likes:
+- id          UUID PK
+- post_id     UUID NOT NULL
+- user_id     UUID NOT NULL
+- created_at  TIMESTAMPTZ NOT NULL
+- UNIQUE (post_id, user_id)
+
+Tabla comments:
+- id          UUID PK
+- post_id     UUID NOT NULL
+- user_id     UUID NOT NULL
+- content     VARCHAR(500) NOT NULL
+- created_at  TIMESTAMPTZ NOT NULL
+
+Tabla comment_reports (migración V3 + V4):
+- id           UUID PK
+- comment_id   UUID NOT NULL REFERENCES comments(id) ON DELETE CASCADE
+- reporter_id  UUID NOT NULL
+- reason       VARCHAR(40) NOT NULL
+- status       VARCHAR(20) NOT NULL DEFAULT 'OPEN'
+- created_at   TIMESTAMPTZ NOT NULL
+- resolved_at  TIMESTAMPTZ
+- resolved_by  UUID
+- Índice único parcial (comment_id, reporter_id) WHERE status = 'OPEN'
+
+Tabla post_reports (migración V3 + V4), en heypudu_posts:
+- id           UUID PK
+- post_id      UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE
+- reporter_id  UUID NOT NULL
+- reason       VARCHAR(40) NOT NULL
+- status       VARCHAR(20) NOT NULL DEFAULT 'OPEN'
+- created_at   TIMESTAMPTZ NOT NULL
+- resolved_at  TIMESTAMPTZ
+- resolved_by  UUID
+- Índice único parcial (post_id, reporter_id) WHERE status = 'OPEN'
+
+
+================================================================================
+6. AUTENTICACIÓN Y ROLES (AWS COGNITO)
+================================================================================
+
+CONCEPTO CLAVE
+--------------
+TODOS los usuarios (normales y admins) existen en Cognito. No hay dos
+sistemas de login. La diferencia está en los GRUPOS asignados.
+
+User Pool: uno solo para toda la app.
+
+GRUPOS
+------
+- user      -> ROLE_USER      (usuario normal)
+- admin     -> ROLE_ADMIN     (administrador)
+- internal  -> ROLE_INTERNAL  (futuro: cliente de servicio)
+
+Los grupos viajan en el claim "cognito:groups" del JWT.
+
+FLUJO DE REGISTRO
+-----------------
+1. Usuario se registra en Cognito con correo + contraseña (desde React con
+   Amplify).
+2. Cognito crea la cuenta, genera "sub" (UUID) y envía código de verificación.
+3. Usuario verifica el correo.
+4. Usuario inicia sesión y recibe un JWT con:
+   - sub: UUID
+   - email: correo
+   - cognito:groups: ["user"]
+5. React llama a POST /api/v1/auth/sync.
+6. ms-auth guarda en auth_users: cognito_sub, email, status ACTIVE.
+7. ms-auth llama a ms-users: POST /api/v1/internal/users con:
+   - cognitoSub
+   - name: "Usuario" (temporal)
+   - username: "user_<primeros 8 chars del sub>" (temporal)
+8. ms-users crea el perfil base.
+9. React redirige a "completar perfil".
+10. Usuario llama a PUT /api/v1/users/me con datos reales.
+
+CREACIÓN DE ADMINS
+------------------
+No se puede crear un admin desde la página pública de registro.
+Se crean manualmente:
+- Consola de AWS Cognito
+- AWS CLI (admin-create-user + admin-add-user-to-group)
+- Script de seed en el backend
+
+BANEO
+-----
+1. Admin llama a PUT /api/v1/admin/users/{id}/ban en ms-users.
+2. ms-users cambia status a BANNED (NO elimina nada).
+3. ms-users llama a ms-auth: PUT /api/v1/internal/users/{sub}/disable.
+4. ms-auth llama a Cognito AdminDisableUser.
+5. El usuario no puede volver a iniciar sesión.
+6. Desbanear es reversible: PUT /unban + AdminEnableUser.
+
+ELIMINACIÓN DE CUENTA
+---------------------
+1. Usuario llama a DELETE /api/v1/users/me en ms-users.
+2. ms-users anonimiza: name="Usuario eliminado", username="deleted_<sub8>",
+   bio=null, avatar_key=null.
+3. ms-users cambia status a DELETED.
+4. ms-users llama a ms-auth: DELETE /api/v1/internal/users/{sub}.
+5. ms-auth llama a Cognito AdminDeleteUser.
+
+DIFERENCIA BANEO vs ELIMINACIÓN
+-------------------------------
+- Banear: reversible, no borra datos, solo cambia status y deshabilita Cognito.
+- Eliminar: irreversible, anonimiza datos y borra de Cognito.
+
+REPORTES Y MODERACIÓN
+---------------------
+1. Usuario reporta una publicación: POST /api/v1/posts/{postId}/reports
+   (ms-posts) o un comentario: POST /api/v1/comments/{commentId}/reports
+   (ms-interactions).
+2. El reporte se guarda con reporter_id (cognitoSub) y estado OPEN.
+3. Un único índice parcial impide dos reportes OPEN del mismo usuario sobre
+   el mismo elemento; si el anterior fue RESOLVED o DISMISSED puede reportar
+   de nuevo y se conserva el historial completo.
+4. El admin ve la cola en GET /api/v1/admin/posts/reports y
+   GET /api/v1/admin/comment-reports.
+5. El admin cambia el estado con PUT .../reports/{reportId}/{status}
+   (RESOLVED o DISMISSED) y se guarda resolved_by.
+6. Solo los reportes OPEN cuentan para los candidatos a baneo.
+
+CANDIDATOS A BANEO
+------------------
+1. El frontend llama a GET /api/v1/admin/users/ban-candidates?threshold=10.
+2. ms-users consulta a ms-posts /api/v1/internal/posts/reports/counts y a
+   ms-interactions /api/v1/internal/comment-reports/counts.
+3. Suma publicaciones y comentarios reportados por autor y devuelve los que
+   superan el umbral, con el desglose de cada tipo.
+4. Desde esa lista el admin puede banear o descartar al usuario.
+
+
+================================================================================
+7. ENDPOINTS DEL BACKEND (RESUMEN)
+================================================================================
+
+MS-AUTH (:8081)
+---------------
+GET    /api/v1/auth/me
+POST   /api/v1/auth/sync
+PUT    /api/v1/internal/users/{cognitoSub}/disable
+PUT    /api/v1/internal/users/{cognitoSub}/enable
+DELETE /api/v1/internal/users/{cognitoSub}
+
+MS-USERS (:8082)
+----------------
+GET    /api/v1/users/me
+PUT    /api/v1/users/me
+DELETE /api/v1/users/me
+GET    /api/v1/users/{id}
+GET    /api/v1/users/by-cognito/{cognitoSub}/avatar   (302, público)
+GET    /api/v1/users/{id}/followers
+GET    /api/v1/users/{id}/following
+POST   /api/v1/users/{id}/follow
+DELETE /api/v1/users/{id}/follow
+GET    /api/v1/users/search?q=
+POST   /api/v1/users/me/avatar/presigned-url
+GET    /api/v1/admin/users
+GET    /api/v1/admin/users/ban-candidates?threshold=10
+PUT    /api/v1/admin/users/{id}/ban
+PUT    /api/v1/admin/users/{id}/unban
+PUT    /api/v1/admin/users/{id}/verify
+PUT    /api/v1/admin/users/{id}/unverify
+POST   /api/v1/internal/users
+GET    /api/v1/internal/users/{id}/summary
+GET    /api/v1/internal/users/{id}/following/ids
+GET    /api/v1/internal/users/by-cognito/{sub}/summary
+GET    /api/v1/internal/users/by-cognito/{sub}/following/ids
+PUT    /api/v1/internal/users/by-cognito/{sub}/post-count?delta=
+GET    /api/v1/internal/users/{id}/exists
+
+MS-POSTS (:8083)
+----------------
+GET    /api/v1/posts
+GET    /api/v1/posts/{id}
+GET    /api/v1/posts/me
+GET    /api/v1/posts/author/{authorId}
+POST   /api/v1/posts
+PUT    /api/v1/posts/{id}
+DELETE /api/v1/posts/{id}
+GET    /api/v1/posts/feed
+GET    /api/v1/posts/search?q=
+POST   /api/v1/posts/audio/presigned-url
+POST   /api/v1/posts/covers/presigned-url
+POST   /api/v1/posts/{postId}/reports
+GET    /api/v1/admin/posts/reports
+PUT    /api/v1/admin/posts/reports/{reportId}/{status}
+GET    /api/v1/admin/posts/audio
+DELETE /api/v1/admin/posts/{postId}
+GET    /api/v1/internal/posts/reports/counts
+PATCH  /api/v1/internal/posts/{id}/counters
+DELETE /api/v1/internal/posts/users/{userId}
+
+MS-INTERACTIONS (:8084)
+-----------------------
+POST   /api/v1/posts/{postId}/likes
+DELETE /api/v1/posts/{postId}/likes
+GET    /api/v1/posts/{postId}/likes
+GET    /api/v1/posts/{postId}/likes/count
+GET    /api/v1/users/me/likes
+POST   /api/v1/posts/{postId}/comments
+GET    /api/v1/posts/{postId}/comments
+DELETE /api/v1/comments/{commentId}
+DELETE /api/v1/admin/comments/{commentId}
+POST   /api/v1/comments/{commentId}/reports
+GET    /api/v1/admin/comment-reports
+PUT    /api/v1/admin/comment-reports/{reportId}/{status}
+GET    /api/v1/internal/comment-reports/counts
+DELETE /api/v1/internal/posts/{postId}/interactions
+
+SALUD (todos los microservicios)
+--------------------------------
+GET /actuator/health
+GET /actuator/info
+
+
+================================================================================
+8. ALMACENAMIENTO EN S3
+================================================================================
+
+BUCKETS
+-------
+- heypudu-audio   (audios de publicaciones)
+- heypudu-covers  (portadas de publicaciones)
+- heypudu-avatars (avatares de usuarios)
+
+Todos privados. Solo accesibles con URLs prefirmadas.
+
+FLUJO DE SUBIDA (audio/portada/avatar)
+--------------------------------------
+1. Frontend llama a POST /presigned-url con { fileName, contentType }.
+2. Backend genera URL prefirmada de S3 (válida 15 min).
+3. Frontend sube el archivo DIRECTO a S3 con PUT.
+4. Frontend llama al endpoint de creación (post o perfil) con la key.
+5. Backend guarda la key en la BD (NO la URL).
+
+FLUJO DE LECTURA
+----------------
+1. Frontend pide un recurso (post, perfil).
+2. Backend genera URL prefirmada de descarga (válida 60 min).
+3. Frontend recibe la URL y reproduce/muestra el archivo.
+
+REGLA CLAVE
+-----------
+La BD guarda KEYS, no URLs. Las URLs se generan en el momento.
+Esto permite cambiar de proveedor de storage sin migrar datos.
+
+
+================================================================================
+9. CONVENCIONES DEL BACKEND
+================================================================================
+
+PAQUETES
+--------
+- ms-auth         -> com.heypudu.ms_auth
+- ms-users        -> com.heypudu.ms_users
+- ms-posts        -> com.heypudu.ms_posts
+- ms-interactions -> com.heypudu.ms_interactions
+
+Subpaquetes: config, controller, client, dto, exception, mapper, model,
+repository, security, service, service/impl.
+
+ENDPOINTS
+---------
+- Prefijo /api/v1/
+- Recurso en plural: /users, /posts
+- Propio: /me
+- Admin: /admin/...
+- Internos: /internal/...
+
+DTOs
+----
+- Como record de Java
+- Sufijo Request para entrada, Response para salida
+- Nunca se exponen entidades JPA
+
+ENTIDADES
+---------
+- Sin Lombok (getters/setters explícitos)
+- Constructor vacío obligatorio (JPA)
+- @Table(name = "...") explícito
+- Instant para fechas, mapeado a TIMESTAMPTZ
+
+MIGRACIONES
+-----------
+- Flyway con nombres V{n}__{descripcion}.sql
+- Nunca modificar una migración ya aplicada
+
+CONFIGURACIÓN
+-------------
+- application.yml: propiedades comunes
+- application-dev.yml: credenciales de desarrollo (hardcodeadas)
+- application-prod.yml: credenciales de producción (variables de entorno)
+- Nunca hardcodear credenciales de producción
+
+SEGURIDAD
+---------
+- OAuth2 Resource Server con Cognito
+- JwtAuthConverter convierte cognito:groups a ROLE_*
+- CognitoUserExtractor extrae sub, email, groups del JWT
+- /actuator/health público
+- Todo lo demás requiere JWT válido
+
+
+================================================================================
+10. FRONTEND (REACT)
+================================================================================
+
+ESTRUCTURA DE CARPETAS
+----------------------
+heyPudu-frontend-web/
+├── .env
+├── .env.example
+├── index.html
+├── package.json
+├── vercel.json
+├── vite.config.ts
+├── tsconfig.json / tsconfig.app.json / tsconfig.node.json
+├── src/
+│   ├── main.tsx
+│   ├── vite-env.d.ts
+│   ├── api/
+│   │   ├── httpClient.ts
+│   │   ├── authService.ts
+│   │   ├── usersService.ts
+│   │   ├── postsService.ts
+│   │   ├── interactionsService.ts
+│   │   ├── upload.ts
+│   │   ├── errors.ts
+│   │   └── index.ts
+│   ├── app/
+│   │   ├── App.tsx
+│   │   ├── router.tsx
+│   │   └── player.ts
+│   ├── auth/
+│   │   ├── amplify.ts
+│   │   ├── AuthContext.tsx
+│   │   ├── RequireAuth.tsx
+│   │   └── RequireRole.tsx
+│   ├── components/
+│   │   ├── audio/Player.tsx
+│   │   ├── briefcasts/BriefcastCard.tsx
+│   │   ├── briefcasts/LikeButton.tsx
+│   │   ├── briefcasts/PostCardMenu.tsx
+│   │   ├── navigation/BottomBar.tsx
+│   │   ├── navigation/Header.tsx
+│   │   ├── profile/FollowButton.tsx
+│   │   ├── profile/ProfileContent.tsx
+│   │   ├── profile/UserAvatar.tsx
+│   │   └── ui/EmptyState.tsx, ErrorState.tsx, Icon.tsx,
+│   │       LoadingState.tsx, ReportMenu.tsx
+│   ├── pages/
+│   │   ├── LoginPage.tsx
+│   │   ├── FeedPage.tsx
+│   │   ├── PostDetailPage.tsx
+│   │   ├── CreatePostPage.tsx
+│   │   ├── EditPostPage.tsx
+│   │   ├── ProfilePage.tsx
+│   │   ├── EditProfilePage.tsx
+│   │   ├── SearchPage.tsx
+│   │   ├── LikesPage.tsx
+│   │   └── AdminPage.tsx
+│   ├── styles/
+│   │   ├── index.css
+│   │   ├── base.css
+│   │   ├── layout.css
+│   │   ├── responsive.css
+│   │   ├── components/audio.css, briefcasts.css, navigation.css
+│   │   └── pages/admin.css, detail.css, feed.css, forms.css, profile.css
+│   ├── types/
+│   │   ├── api.ts
+│   │   └── briefcast.ts
+│   ├── utils/
+│   │   ├── date.ts
+│   │   └── audio.ts
+│   └── data/briefcasts.ts   (datos de ejemplo, pendiente de borrar)
+
+VARIABLES DE ENTORNO (.env)
+---------------------------
+VITE_API_BASE_URL=http://localhost:3000/api
+VITE_COGNITO_USER_POOL_ID=
+VITE_COGNITO_CLIENT_ID=
+VITE_AWS_REGION=
+
+En producción VITE_API_BASE_URL apunta al API Gateway. Para probar cambios
+locales contra la infraestructura real basta con poner la URL del API
+Gateway y añadir http://localhost:5173 al CORS del API Gateway.
+
+AUTENTICACIÓN CON AMPLIFY
+-------------------------
+- <Authenticator> de @aws-amplify/ui-react envuelve la app.
+- Amplify.configure() con userPoolId, userPoolClientId, region.
+- Token obtenido con fetchAuthSession().
+- Se envía el ID token (session.tokens?.idToken), no el access token,
+  porque el access token no incluye el claim email.
+- Roles leídos desde cognito:groups del ID token.
+- AuthContext expone cognitoSub (claim sub) para identificar al usuario en
+  ms-posts y ms-interactions.
+
+CLIENTE AXIOS
+-------------
+Un único cliente en src/api/httpClient.ts con baseURL = VITE_API_BASE_URL.
+Interceptor que adjunta el JWT en cada request y normaliza los errores
+(src/api/errors.ts) con el formato { path, error, message, status }.
+
+GUARDS
+------
+- RequireAuth: redirige a login si no hay sesión.
+- RequireRole("admin"): muestra 403 o redirige si no tiene el rol.
+
+SUBIDA DE ARCHIVOS
+------------------
+Siempre vía URL prefirmada:
+1. Pedir URL al backend.
+2. Subir archivo directo a S3 con PUT.
+3. Enviar la key al backend al crear/actualizar.
+
+GRABACIÓN DE AUDIO
+------------------
+- MediaRecorder API del navegador.
+- Requiere HTTPS en producción (o localhost en dev).
+- Límite de 5 minutos.
+- src/utils/audio.ts corrige la duración: los WebM de MediaRecorder
+  reportan duration = Infinity, así que se hace seek a
+  Number.MAX_SAFE_INTEGER y se lee la duración real.
+
+REPRODUCCIÓN DE AUDIO
+---------------------
+- Reproductor persistente sobre la bottom bar (src/app/player.ts).
+- Reproductor expandido con fondo derivado de la portada.
+- La duración mostrada viene de audioDurationSeconds, no del elemento.
+
+ACCIONES DEL FRONTEND
+---------------------
+- Registro, verificación y login con Cognito.
+- Sync inicial del usuario y completado de perfil.
+- Ver y editar perfil propio, cambiar usuario y avatar.
+- Ver perfiles ajenos con sus publicaciones y seguidores/seguidos.
+- Seguir/dejar de seguir.
+- Buscar usuarios y briefcasts con debounce contra el backend.
+- Grabar, subir y publicar briefcasts con portada y descripción.
+- Feed general y personalizado con paginación ("Cargar más") y
+  deduplicación.
+- Dar/quitar like y ver publicaciones propias con like.
+- Comentar y listar comentarios paginados.
+- Reportar publicaciones y comentarios con motivo.
+- Eliminar publicaciones propias desde el menú de la tarjeta.
+- Panel admin: comentarios reportados, publicaciones reportadas, escucha de
+  audios reportados, candidatos a baneo, banear, desbanear y verificar.
+
+
+================================================================================
+11. DISEÑO VISUAL
+================================================================================
+
+PRINCIPIOS
+----------
+- Audio primero: reproductor siempre accesible.
+- Poco texto, mucho gesto.
+- Sensación de cercanía.
+- Identidad propia por publicación.
+- Móvil primero.
+
+DEBE TENER
+----------
+- Reproductor persistente y expandido.
+- Tarjeta de briefcast con portada tipo disco.
+- Fondo característico por publicación (color dominante de la portada).
+- Bottom bar con 4-5 íconos (Home, Grabar, Buscar, Perfil).
+- Botón de grabar destacado en el centro.
+- Modo oscuro por defecto.
+- Animaciones sutiles.
+- Estados vacíos con personalidad.
+- Toasts de confirmación.
+- Skeleton screens.
+
+NO DEBE TENER
+-------------
+- Barra lateral.
+- Feed plano sin identidad.
+- Menús anidados.
+- Texto pequeño.
+- Formularios largos.
+- Animaciones excesivas.
+- Colores estridentes.
+- Modal para todo.
+- Publicidad.
+- Comentarios con hilos anidados.
+
+PALETA SUGERIDA
+---------------
+- Fondo oscuro: #0F0F12
+- Fondo claro: #FAFAFA
+- Color principal: verde suave o naranja cálido
+- Acento: color derivado de cada portada
+- Texto principal: #FFFFFF (oscuro), #111111 (claro)
+- Texto secundario: #A0A0A8
+
+TIPOGRAFÍA
+----------
+- Inter o Manrope
+- Espaciado base de 8px
+- Radios: 12px tarjetas, 9999px avatares
+
+
+================================================================================
+12. COMUNICACIÓN ENTRE MICROSERVICIOS
+================================================================================
+
+REGLAS
+------
+- NUNCA acceder directamente a la BD de otro microservicio.
+- SÍ llamar por REST cuando se necesita información en tiempo real.
+- SÍ duplicar datos mínimos cuando el dato cambia poco y se lee mucho.
+
+CLIENTES REST
+-------------
+- RestClient de Spring (no OpenFeign).
+- Un bean por cada microservicio al que se llama.
+- URLs configurables por application.yml.
+
+LLAMADAS ACTUALES
+-----------------
+ms-auth -> ms-users:  POST /api/v1/internal/users (crear perfil base)
+ms-users -> ms-auth:  PUT /disable, PUT /enable, DELETE (Cognito admin)
+ms-posts -> ms-users: GET /internal/users/by-cognito/{sub}/summary,
+                      GET /internal/users/{id}/following/ids,
+                      PUT /internal/users/by-cognito/{sub}/post-count
+ms-posts -> ms-interactions:
+                      DELETE /internal/posts/{postId}/interactions
+                      (al eliminar una publicación)
+ms-interactions -> ms-posts:
+                      GET /posts/{id}, PATCH /internal/posts/{id}/counters
+ms-users -> ms-posts: GET /internal/posts/reports/counts
+ms-users -> ms-interactions:
+                      GET /internal/comment-reports/counts
+
+ENDPOINTS INTERNOS
+------------------
+- Prefijo /api/v1/internal/
+- Abiertos en EP1 (sin @PreAuthorize)
+- Trabajo futuro: token de servicio con client_credentials
+
+
+================================================================================
+13. CONFIGURACIÓN Y DESPLIEGUE
+================================================================================
+
+VARIABLES DE ENTORNO COMUNES
+----------------------------
+- SPRING_PROFILES_ACTIVE=prod
+- DB_URL, DB_USERNAME, DB_PASSWORD
+- COGNITO_ISSUER_URI, COGNITO_JWK_SET_URI
+- COGNITO_USER_POOL_ID (solo ms-auth)
+- AWS_REGION
+- CLIENTS_*_BASE_URL (según microservicio)
+- S3_*_BUCKET (según microservicio)
+
+DESARROLLO LOCAL
+----------------
+- PostgreSQL en Docker:
+  docker run -d --name heypudu-postgres \
+    -e POSTGRES_DB=heypudu \
+    -e POSTGRES_USER=heypudu_admin \
+    -e POSTGRES_PASSWORD=devpassword \
+    -p 5432:5432 postgres:16
+
+- Ejecutar cada microservicio:
+  cd ms-xxx && ./gradlew bootRun
+
+- O levantar todo con Docker Compose:
+  docker compose up --build
+
+DOCKER COMPOSE
+--------------
+- postgres: puerto 5432
+- ms-auth: 8081
+- ms-users: 8082
+- ms-posts: 8083
+- ms-interactions: 8084
+- init-db.sql crea esquemas y usuarios al primer arranque
+
+PRODUCCIÓN EN AWS (IMPLEMENTADO 2026-11-02)
+------------------------------------------
+- Cuenta AWS Academy (us-east-1). RDS está bloqueado por política, por lo
+  que la base de datos es PostgreSQL administrado en Neon con SSL.
+- Cinco microservicios en contenedores sobre una EC2 Amazon Linux 2023
+  (t3.small, 2 GB) con swap de 2 GB y límites de memoria por contenedor.
+- Las imágenes se construyen fuera de la EC2 y se publican en Docker Hub
+  (unalmaermitana/heypudu-ms-*). La instancia solo hace `pull`.
+- Application Load Balancer internet-facing con listener HTTPS (ACM) que
+  enruta por path y puerto hacia cinco target groups (8081-8085). Los puertos
+  de los servicios solo aceptan tráfico del Security Group del ALB.
+- API Gateway HTTP API expone una única ruta `ANY /{proxy+}` hacia el ALB.
+- Frontend en Vercel con VITE_API_BASE_URL apuntando a API Gateway.
+- S3 con IAM Role en la instancia (LabInstanceRole) y CORS en los tres
+  buckets (audio, covers, avatars).
+- Detalle operativo completo en DESPLIEGUE-AWS.md.
+
+API GATEWAY (RUTAS)
+-------------------
+Se usa una sola ruta comodín que conserva el path completo:
+
+- ANY /{proxy+}  ->  http://<alb-dns>/{proxy}
+
+El ALB decide el microservicio según reglas de path. Las rutas específicas
+por servicio se descartaron: si comparten una única integración con prefijo
+fijo, todas las peticiones terminan en el servicio equivocado.
+
+Las llamadas entre microservicios NO pasan por el ALB: usan los nombres de
+Docker (http://ms-users:8082, etc.).
+
+IDENTIFICADOR DE USUARIO ENTRE SERVICIOS
+----------------------------------------
+- ms-auth, ms-posts y ms-interactions usan el `cognitoSub` del JWT.
+- ms-users usa su `id` interno además del `cognitoSub`.
+- ms-users expone endpoints internos `by-cognito/{cognitoSub}/...` para que
+  ms-posts resuelva perfiles, seguidos y contadores sin ambigüedad.
+- ms-users también consume ms-posts y ms-interactions (CLIENTS_POSTS_BASE_URL
+  y CLIENTS_INTERACTIONS_BASE_URL) para calcular los candidatos a baneo.
+- Las URLs prefirmadas nunca se almacenan en la base de datos.
+
+
+================================================================================
+14. ESTADO ACTUAL DEL PROYECTO
+================================================================================
+
+COMPLETADO (código e infraestructura)
+--------------------------------------
+- ms-auth: completo + integración con Cognito admin + sync con ms-users
+- ms-users: completo + endpoints internos by-cognito + ban-candidates
+- ms-posts: completo + reportes de publicaciones + moderación de audios
+- ms-interactions: completo + reportes de comentarios + endpoint interno de
+  borrado de interacciones
+- ms-heypudu-rabbit-admin: administración de exchanges, colas y bindings
+- RabbitMQ: comandos, eventos, auditoría, ACK/NACK manual y DLQ
+- Migraciones: ms-posts V1-V5, ms-interactions V1-V4, ms-users V1-V3, ms-auth V1
+- docker-compose.yml, docker-compose.prod.yml y docker-compose.rabbit.yml
+- init-db.sql
+- Dockerfile de los microservicios de negocio y Rabbit Admin
+- build.gradle y settings.gradle de los cinco microservicios
+- README general del backend y de cada microservicio
+- Frontend React completo: auth, búsqueda, feed paginado, perfil propio y
+  público, edición, likes, comentarios, creación de audio, reproductor,
+  reportes y panel admin con moderación de usuarios
+- Cognito configurado con grupos user/admin
+- S3 con 3 buckets, IAM Role y CORS en los tres buckets
+- EC2 con Docker, swap y límites de memoria
+- Docker Hub con las 4 imágenes
+- ALB con 4 target groups y HTTPS con ACM
+- API Gateway HTTP API con ruta comodín
+- Vercel desplegando el frontend desde main
+- DESPLIEGUE-AWS.md con la configuración y el historial de incidentes
+
+PENDIENTE
+---------
+- Eliminar mi cuenta (endpoint listo, sin UI)
+- Auditoría de baneos (motivo y autor, revocación de sesiones)
+- Likes propias más allá de 100 en el feed
+- Respuestas anidadas y reacciones en comentarios
+- CI/CD con GitHub Actions
+- Pruebas automatizadas de backend
+- Limpiar ms-auth/bin y data/briefcasts.ts
+- Rotar la contraseña de Neon
+
+
+================================================================================
+15. REGLAS DE ORO
+================================================================================
+
+1. TODOS los usuarios existen en Cognito. No hay dos sistemas de login.
+2. La diferencia admin/usuario está en los GRUPOS de Cognito.
+3. La BD guarda KEYS de S3, no URLs. Las URLs prefirmadas caducan y no caben
+   en columnas varchar(500).
+4. Los archivos se suben DIRECTO a S3 con URLs prefirmadas.
+5. Cada microservicio tiene su propia BD (esquema separado).
+6. NUNCA acceder a la BD de otro microservicio.
+7. Banear es reversible. Eliminar es irreversible con anonimización.
+8. Los endpoints internos quedan abiertos en EP1 (trabajo futuro: token).
+9. Los roles se leen del claim cognito:groups del JWT.
+10. El frontend usa Amplify para Cognito y axios con interceptor.
+11. Las URLs de microservicios se configuran por .env.
+12. En producción, todas las URLs del front apuntan al API Gateway.
+13. La BD guarda cognito_sub como clave externa.
+    Entre microservicios el identificador es el cognitoSub; ms-users expone
+    endpoints by-cognito para resolverlo.
+14. El username se puede cambiar una vez cada 30 días.
+15. Un usuario no puede seguirse a sí mismo.
+16. Los endpoints internos van bajo /api/v1/internal/.
+17. Flyway gestiona el esquema. Hibernate solo valida (ddl-auto: validate).
+18. Nunca modificar una migración Flyway ya aplicada.
+19. Nunca hardcodear credenciales de producción.
+20. El frontend debe funcionar con el mismo backend que una app Android (API REST pura).
+21. El frontend envía el ID token de Cognito (no el access token) porque es el
+    único que incluye el claim email.
+22. Un mismo usuario no puede tener dos reportes OPEN sobre el mismo elemento;
+    el control es un índice único parcial, así que un reporte descartado se
+    puede volver a emitir y el historial se conserva.
+23. Solo los reportes OPEN cuentan para los candidatos a baneo.
+24. Toda mutación de contadores (likes, comentarios, publicaciones) se
+    notifica al servicio dueño del dato; nunca se escribe en su BD.
+
+
+================================================================================
+16. GLOSARIO
+================================================================================
+
+Briefcast:    Audio de máximo 5 minutos publicado por un usuario.
+Cognito:      Servicio de AWS para autenticación de usuarios.
+User Pool:    Almacén de usuarios en Cognito.
+sub:          UUID único e inmutable que identifica a un usuario en Cognito.
+JWT:          JSON Web Token, contiene identidad y grupos del usuario.
+cognito:groups: Claim del JWT con los grupos del usuario.
+ROLE_USER:    Autoridad de Spring para usuarios normales.
+ROLE_ADMIN:   Autoridad de Spring para administradores.
+ROLE_INTERNAL: Autoridad de Spring para clientes de servicio.
+Prefirmada:   URL de S3 con permisos temporales para subir o descargar.
+Presigned URL: URL prefirmada.
+Soft delete:  Marcar como eliminado sin borrar físicamente.
+Anonimizar:   Reemplazar datos personales por valores genéricos.
+Reporte:      Señalización de un usuario sobre una publicación o comentario,
+              con motivo y estado OPEN/RESOLVED/DISMISSED.
+Candidato a baneo: Usuario cuyos reportes OPEN acumulados (publicaciones más
+              comentarios) superan el umbral configurado (10 por defecto).
+ID token:     Token de Cognito que incluye identidad completa (sub, email,
+              cognito:groups). Es el que viaja al backend.
+Access token: Token de Cognito con scopes; no incluye email, por eso no se usa.
+URL prefirmada: Enlace temporal de S3 para subir o descargar un objeto.
+Flyway:       Herramienta de migraciones versionadas de la base de datos.
+Database-per-service: Cada microservicio tiene su propia BD.
+BFF:          Backend For Frontend (capa que agrega llamadas).
+Monorepo:     Un solo repositorio con varios microservicios.
+
+
+================================================================================
+FIN DEL DOCUMENTO
+================================================================================

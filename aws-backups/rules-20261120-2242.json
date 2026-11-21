@@ -1,0 +1,600 @@
+﻿{
+    "Rules": [
+        {
+            "RuleArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:listener-rule/app/heypudu-alb/b44b95e6278e3e8f/31e350703aa0c2e2/d34b65383224b0c9",
+            "Priority": "1",
+            "Conditions": [
+                {
+                    "Field": "path-pattern",
+                    "Values": [
+                        "/api/v1/posts/*/likes"
+                    ],
+                    "PathPatternConfig": {
+                        "Values": [
+                            "/api/v1/posts/*/likes"
+                        ]
+                    }
+                }
+            ],
+            "Actions": [
+                {
+                    "Type": "forward",
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+                    "Order": 1,
+                    "ForwardConfig": {
+                        "TargetGroups": [
+                            {
+                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+                                "Weight": 1
+                            }
+                        ],
+                        "TargetGroupStickinessConfig": {
+                            "Enabled": false,
+                            "DurationSeconds": 3600
+                        }
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "Transforms": []
+        },
+        {
+            "RuleArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:listener-rule/app/heypudu-alb/b44b95e6278e3e8f/31e350703aa0c2e2/45b0a3251b5170c2",
+            "Priority": "2",
+            "Conditions": [
+                {
+                    "Field": "path-pattern",
+                    "Values": [
+                        "/api/v1/posts/*/comments"
+                    ],
+                    "PathPatternConfig": {
+                        "Values": [
+                            "/api/v1/posts/*/comments"
+                        ]
+                    }
+                }
+            ],
+            "Actions": [
+                {
+                    "Type": "forward",
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+                    "Order": 1,
+                    "ForwardConfig": {
+                        "TargetGroups": [
+                            {
+                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+                                "Weight": 1
+                            }
+                        ],
+                        "TargetGroupStickinessConfig": {
+                            "Enabled": false,
+                            "DurationSeconds": 3600
+                        }
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "Transforms": []
+        },
+        {
+            "RuleArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:listener-rule/app/heypudu-alb/b44b95e6278e3e8f/31e350703aa0c2e2/f446d3e53a50e771",
+            "Priority": "3",
+            "Conditions": [
+                {
+                    "Field": "path-pattern",
+                    "Values": [
+                        "/api/v1/users/me/likes"
+                    ],
+                    "PathPatternConfig": {
+                        "Values": [
+                            "/api/v1/users/me/likes"
+                        ]
+                    }
+                }
+            ],
+            "Actions": [
+                {
+                    "Type": "forward",
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+                    "Order": 1,
+                    "ForwardConfig": {
+                        "TargetGroups": [
+                            {
+                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+                                "Weight": 1
+                            }
+                        ],
+                        "TargetGroupStickinessConfig": {
+                            "Enabled": false,
+                            "DurationSeconds": 3600
+                        }
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "Transforms": []
+        },
+        {
+            "RuleArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:listener-rule/app/heypudu-alb/b44b95e6278e3e8f/31e350703aa0c2e2/43f1950036bf6c19",
+            "Priority": "4",
+            "Conditions": [
+                {
+                    "Field": "path-pattern",
+                    "Values": [
+                        "/api/v1/comments/*/reports"
+                    ],
+                    "PathPatternConfig": {
+                        "Values": [
+                            "/api/v1/comments/*/reports"
+                        ]
+                    }
+                }
+            ],
+            "Actions": [
+                {
+                    "Type": "forward",
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+                    "Order": 1,
+                    "ForwardConfig": {
+                        "TargetGroups": [
+                            {
+                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+                                "Weight": 1
+                            }
+                        ],
+                        "TargetGroupStickinessConfig": {
+                            "Enabled": false,
+                            "DurationSeconds": 3600
+                        }
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "Transforms": []
+        },
+        {
+            "RuleArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:listener-rule/app/heypudu-alb/b44b95e6278e3e8f/31e350703aa0c2e2/f52a3728f46d7fd5",
+            "Priority": "5",
+            "Conditions": [
+                {
+                    "Field": "path-pattern",
+                    "Values": [
+                        "/api/v1/admin/comment-reports"
+                    ],
+                    "PathPatternConfig": {
+                        "Values": [
+                            "/api/v1/admin/comment-reports"
+                        ]
+                    }
+                }
+            ],
+            "Actions": [
+                {
+                    "Type": "forward",
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+                    "Order": 1,
+                    "ForwardConfig": {
+                        "TargetGroups": [
+                            {
+                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+                                "Weight": 1
+                            }
+                        ],
+                        "TargetGroupStickinessConfig": {
+                            "Enabled": false,
+                            "DurationSeconds": 3600
+                        }
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "Transforms": []
+        },
+        {
+            "RuleArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:listener-rule/app/heypudu-alb/b44b95e6278e3e8f/31e350703aa0c2e2/4e4cb31569f2f01a",
+            "Priority": "6",
+            "Conditions": [
+                {
+                    "Field": "path-pattern",
+                    "Values": [
+                        "/api/v1/admin/comment-reports/*"
+                    ],
+                    "PathPatternConfig": {
+                        "Values": [
+                            "/api/v1/admin/comment-reports/*"
+                        ]
+                    }
+                }
+            ],
+            "Actions": [
+                {
+                    "Type": "forward",
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+                    "Order": 1,
+                    "ForwardConfig": {
+                        "TargetGroups": [
+                            {
+                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+                                "Weight": 1
+                            }
+                        ],
+                        "TargetGroupStickinessConfig": {
+                            "Enabled": false,
+                            "DurationSeconds": 3600
+                        }
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "Transforms": []
+        },
+        {
+            "RuleArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:listener-rule/app/heypudu-alb/b44b95e6278e3e8f/31e350703aa0c2e2/9b998cd4c2ae2aeb",
+            "Priority": "7",
+            "Conditions": [
+                {
+                    "Field": "path-pattern",
+                    "Values": [
+                        "/api/v1/admin/comments/*"
+                    ],
+                    "PathPatternConfig": {
+                        "Values": [
+                            "/api/v1/admin/comments/*"
+                        ]
+                    }
+                }
+            ],
+            "Actions": [
+                {
+                    "Type": "forward",
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+                    "Order": 1,
+                    "ForwardConfig": {
+                        "TargetGroups": [
+                            {
+                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+                                "Weight": 1
+                            }
+                        ],
+                        "TargetGroupStickinessConfig": {
+                            "Enabled": false,
+                            "DurationSeconds": 3600
+                        }
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "Transforms": []
+        },
+        {
+            "RuleArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:listener-rule/app/heypudu-alb/b44b95e6278e3e8f/31e350703aa0c2e2/e8060695ccf3b53f",
+            "Priority": "8",
+            "Conditions": [
+                {
+                    "Field": "path-pattern",
+                    "Values": [
+                        "/api/v1/admin/posts/*"
+                    ],
+                    "PathPatternConfig": {
+                        "Values": [
+                            "/api/v1/admin/posts/*"
+                        ]
+                    }
+                }
+            ],
+            "Actions": [
+                {
+                    "Type": "forward",
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-posts-tg/c011b45b2364b8cc",
+                    "Order": 1,
+                    "ForwardConfig": {
+                        "TargetGroups": [
+                            {
+                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-posts-tg/c011b45b2364b8cc",
+                                "Weight": 1
+                            }
+                        ],
+                        "TargetGroupStickinessConfig": {
+                            "Enabled": false,
+                            "DurationSeconds": 3600
+                        }
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "Transforms": []
+        },
+        {
+            "RuleArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:listener-rule/app/heypudu-alb/b44b95e6278e3e8f/31e350703aa0c2e2/75d769bf03dbe069",
+            "Priority": "9",
+            "Conditions": [
+                {
+                    "Field": "path-pattern",
+                    "Values": [
+                        "/api/v1/admin/users"
+                    ],
+                    "PathPatternConfig": {
+                        "Values": [
+                            "/api/v1/admin/users"
+                        ]
+                    }
+                }
+            ],
+            "Actions": [
+                {
+                    "Type": "forward",
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-users-tg/b745eb20fad58ff4",
+                    "Order": 1,
+                    "ForwardConfig": {
+                        "TargetGroups": [
+                            {
+                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-users-tg/b745eb20fad58ff4",
+                                "Weight": 1
+                            }
+                        ],
+                        "TargetGroupStickinessConfig": {
+                            "Enabled": false,
+                            "DurationSeconds": 3600
+                        }
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "Transforms": []
+        },
+        {
+            "RuleArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:listener-rule/app/heypudu-alb/b44b95e6278e3e8f/31e350703aa0c2e2/63f5a6bbf4649c24",
+            "Priority": "10",
+            "Conditions": [
+                {
+                    "Field": "path-pattern",
+                    "Values": [
+                        "/api/v1/admin/users/*"
+                    ],
+                    "PathPatternConfig": {
+                        "Values": [
+                            "/api/v1/admin/users/*"
+                        ]
+                    }
+                }
+            ],
+            "Actions": [
+                {
+                    "Type": "forward",
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-users-tg/b745eb20fad58ff4",
+                    "Order": 1,
+                    "ForwardConfig": {
+                        "TargetGroups": [
+                            {
+                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-users-tg/b745eb20fad58ff4",
+                                "Weight": 1
+                            }
+                        ],
+                        "TargetGroupStickinessConfig": {
+                            "Enabled": false,
+                            "DurationSeconds": 3600
+                        }
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "Transforms": []
+        },
+        {
+            "RuleArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:listener-rule/app/heypudu-alb/b44b95e6278e3e8f/31e350703aa0c2e2/c18b23c0dd37a14e",
+            "Priority": "15",
+            "Conditions": [
+                {
+                    "Field": "path-pattern",
+                    "Values": [
+                        "/api/v1/posts"
+                    ],
+                    "PathPatternConfig": {
+                        "Values": [
+                            "/api/v1/posts"
+                        ]
+                    }
+                }
+            ],
+            "Actions": [
+                {
+                    "Type": "forward",
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-posts-tg/c011b45b2364b8cc",
+                    "Order": 1,
+                    "ForwardConfig": {
+                        "TargetGroups": [
+                            {
+                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-posts-tg/c011b45b2364b8cc",
+                                "Weight": 1
+                            }
+                        ],
+                        "TargetGroupStickinessConfig": {
+                            "Enabled": false,
+                            "DurationSeconds": 3600
+                        }
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "Transforms": []
+        },
+        {
+            "RuleArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:listener-rule/app/heypudu-alb/b44b95e6278e3e8f/31e350703aa0c2e2/09d9f7359435626a",
+            "Priority": "20",
+            "Conditions": [
+                {
+                    "Field": "path-pattern",
+                    "Values": [
+                        "/api/v1/users/*"
+                    ],
+                    "PathPatternConfig": {
+                        "Values": [
+                            "/api/v1/users/*"
+                        ]
+                    }
+                }
+            ],
+            "Actions": [
+                {
+                    "Type": "forward",
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-users-tg/b745eb20fad58ff4",
+                    "Order": 1,
+                    "ForwardConfig": {
+                        "TargetGroups": [
+                            {
+                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-users-tg/b745eb20fad58ff4",
+                                "Weight": 1
+                            }
+                        ],
+                        "TargetGroupStickinessConfig": {
+                            "Enabled": false,
+                            "DurationSeconds": 3600
+                        }
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "Transforms": []
+        },
+        {
+            "RuleArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:listener-rule/app/heypudu-alb/b44b95e6278e3e8f/31e350703aa0c2e2/a984081f6311eeae",
+            "Priority": "30",
+            "Conditions": [
+                {
+                    "Field": "path-pattern",
+                    "Values": [
+                        "/api/v1/posts/*"
+                    ],
+                    "PathPatternConfig": {
+                        "Values": [
+                            "/api/v1/posts/*"
+                        ]
+                    }
+                }
+            ],
+            "Actions": [
+                {
+                    "Type": "forward",
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-posts-tg/c011b45b2364b8cc",
+                    "Order": 1,
+                    "ForwardConfig": {
+                        "TargetGroups": [
+                            {
+                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-posts-tg/c011b45b2364b8cc",
+                                "Weight": 1
+                            }
+                        ],
+                        "TargetGroupStickinessConfig": {
+                            "Enabled": false,
+                            "DurationSeconds": 3600
+                        }
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "Transforms": []
+        },
+        {
+            "RuleArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:listener-rule/app/heypudu-alb/b44b95e6278e3e8f/31e350703aa0c2e2/e486e41be4a182ef",
+            "Priority": "40",
+            "Conditions": [
+                {
+                    "Field": "path-pattern",
+                    "Values": [
+                        "/api/v1/comments/*"
+                    ],
+                    "PathPatternConfig": {
+                        "Values": [
+                            "/api/v1/comments/*"
+                        ]
+                    }
+                }
+            ],
+            "Actions": [
+                {
+                    "Type": "forward",
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+                    "Order": 1,
+                    "ForwardConfig": {
+                        "TargetGroups": [
+                            {
+                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-interactions-tg/23cf8f9f0eb2954b",
+                                "Weight": 1
+                            }
+                        ],
+                        "TargetGroupStickinessConfig": {
+                            "Enabled": false,
+                            "DurationSeconds": 3600
+                        }
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "Transforms": []
+        },
+        {
+            "RuleArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:listener-rule/app/heypudu-alb/b44b95e6278e3e8f/31e350703aa0c2e2/e66ec764effc9830",
+            "Priority": "50",
+            "Conditions": [
+                {
+                    "Field": "path-pattern",
+                    "Values": [
+                        "/api/v1/auth/*"
+                    ],
+                    "PathPatternConfig": {
+                        "Values": [
+                            "/api/v1/auth/*"
+                        ]
+                    }
+                }
+            ],
+            "Actions": [
+                {
+                    "Type": "forward",
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-auth-tg/10bf0d7ba37fb2c5",
+                    "Order": 1,
+                    "ForwardConfig": {
+                        "TargetGroups": [
+                            {
+                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-auth-tg/10bf0d7ba37fb2c5",
+                                "Weight": 1
+                            }
+                        ],
+                        "TargetGroupStickinessConfig": {
+                            "Enabled": false,
+                            "DurationSeconds": 3600
+                        }
+                    }
+                }
+            ],
+            "IsDefault": false,
+            "Transforms": []
+        },
+        {
+            "RuleArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:listener-rule/app/heypudu-alb/b44b95e6278e3e8f/31e350703aa0c2e2/0143723ac0d54f14",
+            "Priority": "default",
+            "Conditions": [],
+            "Actions": [
+                {
+                    "Type": "forward",
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-auth-tg/10bf0d7ba37fb2c5",
+                    "Order": 1,
+                    "ForwardConfig": {
+                        "TargetGroups": [
+                            {
+                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:561816430875:targetgroup/heypudu-auth-tg/10bf0d7ba37fb2c5",
+                                "Weight": 1
+                            }
+                        ],
+                        "TargetGroupStickinessConfig": {
+                            "Enabled": false,
+                            "DurationSeconds": 3600
+                        }
+                    }
+                }
+            ],
+            "IsDefault": true,
+            "Transforms": []
+        }
+    ]
+}

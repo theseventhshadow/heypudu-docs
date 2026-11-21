@@ -1,0 +1,394 @@
+REVISION DE INTEGRACION HEYPUDU
+Fecha original: 2026-10-25
+Actualizado: 2026-11-18 — pruebas de ms-users reactivadas (parcial)
+Actualizado: 2026-11-02 — integración y mensajería completadas
+Actualizado: 2026-10-29 (v2) — búsqueda, paginación, perfil público y
+moderación de usuarios conectados
+
+ESTADO ACTUAL (2026-11-18)
+
+Los puntos 1 a 12 de este documento quedaron resueltos salvo los que se
+indican expresamente como pendientes:
+
+- API publica: AWS API Gateway HTTP API (f02rmdid97) hacia un Application
+  Load Balancer con HTTPS (ACM), que enruta a cinco microservicios.
+- Vercel configurado con VITE_API_BASE_URL apuntando a API Gateway.
+- Autenticacion Cognito integrada con Amplify y AuthContext. Se envia el ID
+  token (incluye email); AuthContext expone tambien el cognitoSub.
+- Cliente HTTP con axios, interceptor de JWT y errores normalizados.
+- Servicios tipados para auth, users, posts, interactions y upload.
+- Datos de maqueta reemplazados en feed, perfil, likes, busqueda y detalle.
+- Panel de administracion conectado con reportes de comentarios, reportes de
+  publicaciones, moderacion de audios, candidatos a baneo, ban y unban.
+- Busqueda real contra GET /posts/search y GET /users/search con debounce.
+- Feed general y personalizado con paginacion y deduplicacion.
+- Perfil publico con sus publicaciones, seguidores y seguidos.
+- Subida directa a S3 desde el navegador con URLs prefirmadas.
+- CORS configurado en API Gateway y en los tres buckets de S3.
+- RabbitMQ desplegado en una EC2 separada con los nodos `rabbit1` y `rabbit2`.
+- `ms-posts` publica `post.delete` y `ms-interactions` elimina likes y
+  comentarios de forma asíncrona.
+- `ms-interactions` publica eventos de likes y comentarios; `ms-users`
+  persiste notificaciones y `ms-posts` registra auditoría.
+- `ms-heypudu-rabbit-admin` está desplegado en el puerto `8085` y administra
+  exchanges, colas y bindings con `ROLE_ADMIN`.
+
+Siguen pendientes: validacion estricta de claves S3 (punto 9), eliminacion
+del avatar en S3 al borrar la cuenta (punto 10) y las pruebas automatizadas
+de backend (punto 11, ya iniciadas en ms-users).
+
+La funcionalidad de salas de audio en vivo (Kafka, ms-live, MediaMTX) es
+trabajo nuevo y no forma parte de esta revision; su guia es
+PLAN-IMPLEMENTACION-KAFKA.md.
+
+La configuracion detallada vive en DESPLIEGUE-AWS.md.
+El resto de este documento se conserva como registro historico.
+
+OBJETIVO DE DESPLIEGUE
+
+El frontend React/Vite se despliega en Vercel.
+
+Docker se utilizara para el backend y sus dependencias:
+
+- PostgreSQL.
+- ms-auth.
+- ms-users.
+- ms-posts.
+- ms-interactions.
+- ms-heypudu-rabbit-admin.
+
+Por lo tanto, no es necesario incorporar el frontend al docker-compose.yml.
+
+ARQUITECTURA (resuelta)
+
+Flujo en produccion:
+
+Usuario
+  -> Frontend React desplegado en Vercel
+  -> API Gateway HTTP API (HTTPS, ruta ANY /{proxy+})
+  -> Application Load Balancer con HTTPS
+  -> Microservicios backend en EC2 (Docker)
+  -> PostgreSQL en Neon y S3
+
+PENDIENTES (histórico — resueltos el 2026-10-29)
+
+A continuación se conserva la descripción original de cada pendiente.
+
+1. Crear o definir la API publica  [HECHO]
+
+Descripcion original: no existia ningun servicio publico en la URL que usaba
+el frontend. Alternativas: API Gateway propio o exponer cada microservicio.
+
+Resuelto con AWS API Gateway HTTP API (f02rmdid97) y una unica ruta
+ANY /{proxy+} hacia el Application Load Balancer, que reparte por path.
+
+2. Configurar la URL de API en Vercel  [HECHO]
+
+Valor final en Vercel:
+
+VITE_API_BASE_URL=https://f02rmdid97.execute-api.us-east-1.amazonaws.com/api
+
+El nombre de la variable quedo unificado como VITE_API_BASE_URL en
+.env.example, en el codigo y en Vercel. El frontend no usa localhost en
+produccion.
+
+3. Integrar autenticacion Cognito en el frontend  [HECHO]
+
+Descripcion original: faltaba registro, login, logout, recuperacion de
+sesion, renovacion del JWT, envio del header Authorization, proteccion de
+rutas privadas y sincronizacion inicial.
+
+Resuelto con Amplify v6 y Authenticator en src/auth: AuthContext con sesion
+persistente y cognitoSub expuesto, guards RequireAuth y RequireRole,
+interceptor que adjunta el JWT y POST /api/v1/auth/sync con redireccion a
+completar perfil cuando los datos aun son temporales.
+
+4. Crear el cliente HTTP y los servicios del frontend  [HECHO]
+
+Descripcion original: faltaba un cliente HTTP centralizado y los servicios
+para consumir el backend.
+
+Resuelto en src/api: httpClient unico con baseURL configurable, interceptor
+de JWT, errores normalizados, tipos en src/types y servicios de auth,
+users, posts, interactions y upload.
+
+5. Reemplazar los datos de maqueta  [HECHO]
+
+Feed, perfil, likes, busqueda, detalle y panel admin consumen la API real,
+con estados de carga, error y vacio (LoadingState, ErrorState, EmptyState).
+
+El archivo src/data/briefcasts.ts quedo sin uso y esta pendiente de borrar.
+
+6. Implementar el flujo de subida S3 desde el frontend  [HECHO]
+
+Descripcion original: el backend generaba URLs prefirmadas pero el
+frontend no las usaba.
+
+Resuelto en src/api/upload.ts: solicitud de URL para avatar, audio y
+portada, PUT directo a S3, envio de la key al crear o actualizar, estados de
+carga y error, validacion de tipo y tamano en la interfaz. Los archivos no
+atraviesan el backend.
+
+7. Completar la configuracion de produccion de CORS  [HECHO]
+
+Descripcion original: los microservicios ya tenian CORS en codigo pero
+faltaba verificar el entorno desplegado.
+
+Resuelto: APP_CORS_ALLOWED_ORIGINS contiene el dominio de Vercel y
+http://localhost:5173, y API Gateway tiene CORS con preflight OPTIONS y los
+headers Authorization y Content-Type.
+
+8. Completar la configuracion CORS de los buckets S3  [HECHO]
+
+Descripcion original: los buckets debian permanecer privados y permitir solo
+las operaciones necesarias para URLs prefirmadas.
+
+Resuelto: CORS aplicado y verificado en heypudu-avatars, heypudu-audio y
+heypudu-covers con los origenes de Vercel y localhost:5173, metodos
+GET/PUT/HEAD y headers Content-Type y Authorization.
+
+9. Reforzar la validacion de claves S3
+
+Actualmente el backend genera claves aleatorias, pero acepta las claves
+recibidas en las solicitudes sin comprobar completamente su pertenencia.
+
+Antes de produccion se debe validar:
+
+- Que avatarKey utilice el prefijo avatars/.
+- Que audioKey utilice el prefijo audios/.
+- Que coverImageKey utilice el prefijo covers/.
+- Que la clave corresponda al usuario o a la publicacion que la utiliza.
+- Que una clave no pueda reutilizarse para asociar el objeto de otro usuario.
+
+La validacion debe realizarse en backend; la validacion del frontend no es
+suficiente.
+
+10. Eliminar el avatar al eliminar una cuenta
+
+En el flujo actual de eliminacion de usuario, el perfil se anonimiza y
+avatarKey se establece en null, pero el objeto anterior no se elimina
+explicitamente de S3.
+
+Falta eliminar el avatar mediante S3Service.deleteAvatar(...) antes de
+perder la referencia almacenada y despues completar la transaccion de forma
+consistente.
+
+11. Activar y ampliar las pruebas backend  [PARCIAL]
+
+Estado al 2026-11-18: ms-users ya tiene las dependencias reactivadas y un
+test unitario (FollowServiceImplTest, commit 040e25e), creado junto con la
+consulta interna followers/check para las salas en vivo. Faltan ms-auth,
+ms-posts y ms-interactions.
+
+Las dependencias de testing estan comentadas en:
+
+- ms-auth/build.gradle
+- ms-posts/build.gradle
+- ms-interactions/build.gradle
+
+(ms-users/build.gradle ya está activo desde el 2026-11-18.)
+
+Falta activar las dependencias y agregar pruebas para:
+
+- Seguridad y autenticacion JWT.
+- Generacion de URLs prefirmadas.
+- Validacion de tipos de archivo.
+- Validacion de claves S3.
+- Creacion de publicaciones con audio y portada.
+- Eliminacion de objetos S3.
+- Eliminacion de avatar al borrar una cuenta.
+- CORS y solicitudes OPTIONS.
+
+12. Verificar el despliegue completo  [HECHO]
+
+Verificado en el entorno integrado: frontend en Vercel, API publica por API
+Gateway, JWT de Cognito aceptado por los cinco microservicios, flujo
+/auth/sync, lectura y escritura de perfil, creacion de publicaciones con
+audio y portada, subida directa a S3, feed, likes, comentarios,
+seguimientos, busqueda, reportes y panel admin, todo con CORS correcto.
+
+ENDPOINTS QUE DEBE CONSUMIR EL FRONTEND
+
+Autenticacion - ms-auth:
+
+- GET /api/v1/auth/me
+- POST /api/v1/auth/sync
+
+Usuarios - ms-users:
+
+- GET /api/v1/users/me
+- PUT /api/v1/users/me
+- DELETE /api/v1/users/me
+- GET /api/v1/users/{userId}
+- GET /api/v1/users/by-cognito/{cognitoSub}/avatar
+- GET /api/v1/users/search
+- POST /api/v1/users/me/avatar/presigned-url
+
+Administracion de usuarios - ms-users:
+
+- GET /api/v1/admin/users
+- GET /api/v1/admin/users/ban-candidates?threshold=10
+- PUT /api/v1/admin/users/{userId}/ban
+- PUT /api/v1/admin/users/{userId}/unban
+- PUT /api/v1/admin/users/{userId}/verify
+- PUT /api/v1/admin/users/{userId}/unverify
+
+Seguimientos - ms-users:
+
+- POST /api/v1/users/{userId}/follow
+- DELETE /api/v1/users/{userId}/follow
+- GET /api/v1/users/{userId}/followers
+- GET /api/v1/users/{userId}/following
+
+Publicaciones y feed - ms-posts:
+
+- POST /api/v1/posts
+- GET /api/v1/posts/{postId}
+- GET /api/v1/posts/me
+- GET /api/v1/posts/author/{authorId}
+- PUT /api/v1/posts/{postId}
+- DELETE /api/v1/posts/{postId}
+- POST /api/v1/posts/audio/presigned-url
+- POST /api/v1/posts/covers/presigned-url
+- GET /api/v1/posts
+- GET /api/v1/posts/feed
+- GET /api/v1/posts/search
+
+Likes - ms-interactions:
+
+- POST /api/v1/posts/{postId}/likes
+- DELETE /api/v1/posts/{postId}/likes
+- GET /api/v1/posts/{postId}/likes
+- GET /api/v1/posts/{postId}/likes/count
+- GET /api/v1/users/me/likes
+
+Comentarios - ms-interactions:
+
+- POST /api/v1/posts/{postId}/comments
+- GET /api/v1/posts/{postId}/comments
+- DELETE /api/v1/comments/{commentId}
+- DELETE /api/v1/admin/comments/{commentId}
+
+Reportes - ms-posts y ms-interactions:
+
+- POST /api/v1/posts/{postId}/reports
+- GET /api/v1/admin/posts/reports
+- PUT /api/v1/admin/posts/reports/{reportId}/{status}
+- POST /api/v1/comments/{commentId}/reports
+- GET /api/v1/admin/comment-reports
+- PUT /api/v1/admin/comment-reports/{reportId}/{status}
+
+Moderacion de audios - ms-posts:
+
+- GET /api/v1/admin/posts/audio
+- DELETE /api/v1/admin/posts/{postId}
+
+CONSIDERACIONES PARA EL FRONTEND
+
+Los endpoints paginados devuelven Page<T> de Spring. El cliente debe
+soportar una respuesta con content, totalElements, totalPages, number y
+size, y enviar parametros como:
+
+?page=0&size=20&sort=createdAt,desc
+
+El endpoint GET /api/v1/posts tambien requiere JWT por la seguridad global.
+
+El frontend debe llamar a /api/v1/auth/sync despues de autenticar al usuario.
+No debe intentar crear perfiles mediante POST /api/v1/users, porque ese
+endpoint publico no existe. La creacion interna se realiza mediante el flujo
+de sincronizacion.
+
+RESUELTO
+
+1. Integracion S3 en ms-users
+
+Implementado mediante:
+
+- S3Config.java, que crea S3Client y S3Presigner.
+- S3ServiceImpl.java, que genera URLs prefirmadas para avatares.
+- Configuracion aws.s3.region y aws.s3.avatars-bucket.
+- Endpoint POST /api/v1/users/me/avatar/presigned-url.
+- URLs de descarga prefirmadas para perfiles y busquedas.
+- Eliminacion del avatar anterior al reemplazarlo o quitarlo del perfil.
+
+La URL de subida tiene una vigencia de 15 minutos y la URL de descarga
+tiene una vigencia de 60 minutos.
+
+2. Integracion S3 en ms-posts
+
+Implementado mediante:
+
+- S3Config.java, que crea S3Client y S3Presigner.
+- S3ServiceImpl.java, que gestiona audio y portadas.
+- Configuracion de buckets separados para audio y covers.
+- Endpoint POST /api/v1/posts/audio/presigned-url.
+- Endpoint POST /api/v1/posts/covers/presigned-url.
+- URLs de descarga prefirmadas en las respuestas de publicaciones y feed.
+- Eliminacion de audio y portada al eliminar una publicacion.
+
+Las claves generadas utilizan los prefijos audios/ y covers/. La URL de
+subida tiene una vigencia de 15 minutos y la URL de descarga tiene una
+vigencia de 60 minutos.
+
+3. Configuracion de AWS por entorno
+
+Se agregaron variables para region y buckets en:
+
+- application.yml.
+- application-dev.yml.
+- application-prod.yml.
+- docker-compose.yml.
+
+Las variables principales son:
+
+- AWS_REGION.
+- S3_AVATARS_BUCKET.
+- S3_AUDIO_BUCKET.
+- S3_COVERS_BUCKET.
+
+4. Validacion basica de archivos
+
+Los DTO PresignedUrlRequest validan que:
+
+- fileName no este vacio.
+- contentType no este vacio.
+- Los avatares sean image/*.
+- El audio sea audio/*.
+- Las portadas sean image/*.
+
+5. CORS en los microservicios
+
+Los cinco microservicios ya tienen configuracion de CORS integrada con
+Spring Security. La lista de origenes se controla mediante
+APP_CORS_ALLOWED_ORIGINS y permite configurar el frontend local y el de
+produccion sin utilizar * obligatoriamente.
+
+6. Documentacion de arquitectura y S3
+
+El README del backend ya documenta:
+
+- Microservicios y puertos.
+- Variables de entorno de S3.
+- Flujo de URLs prefirmadas.
+- Uso de API Gateway en produccion.
+- Configuracion CORS de S3.
+- Despliegue del frontend mediante una URL publica de API.
+
+CONCLUSION
+
+La integracion entre el frontend desplegado en Vercel y el backend en AWS
+esta completa: API publica por API Gateway con HTTPS, autenticacion Cognito,
+CRUD de perfiles y publicaciones, subida directa a S3, feed paginado,
+busqueda real, perfiles publicos, likes, comentarios, seguimientos, reportes,
+moderacion con candidatos a baneo y mensajeria RabbitMQ con DLQ.
+
+Queda por cerrar, sin bloquear el uso de la aplicacion:
+
+- Validacion estricta de claves S3 (punto 9): comprobar prefijo y
+  pertenencia de avatarKey, audioKey y coverImageKey en backend.
+- Eliminar el avatar en S3 al eliminar una cuenta (punto 10).
+- Pruebas automatizadas de backend (punto 11).
+- Endurecer los endpoints internos con un token de servicio.
+- Eliminar mi cuenta desde la interfaz.
+- Auditoria de baneos: guardar motivo y autor, y revocar sesiones activas.
+- CI/CD con GitHub Actions.

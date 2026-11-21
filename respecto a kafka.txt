@@ -1,0 +1,103 @@
+Documento de Decisiones Técnicas: Salas de Audio en Vivo en heyPudú!
+
+Versión: 1.0
+Propósito: Registrar las decisiones de diseño, arquitectura y tecnología tomadas para implementar la funcionalidad de "Salas de Audio en Vivo" en heyPudú!, de modo que cualquier desarrollador o IA pueda retomar el trabajo sin contexto adicional.
+
+> Nota (2026-11-18): este documento es la fuente de decisiones original y se
+> mantiene congelado. Su operacionalización por fases, el estado real de avance
+> y la resolución de las ambigüedades D1-D7 viven en
+> PLAN-IMPLEMENTACION-KAFKA.md (v1.1).
+
+1. Contexto y Objetivo
+
+Se decidió añadir una nueva funcionalidad al sistema: Salas de Audio en Vivo. En esta funcionalidad, un usuario (el creador) transmite audio en tiempo real desde su navegador, y otros usuarios (los oyentes) pueden escucharlo. El acceso está restringido: solo los seguidores del creador pueden escuchar la sala.
+
+El audio viaja por un canal de baja latencia (WebRTC) a través de un servidor de medios dedicado. Las reacciones e interacciones de los oyentes se publican en un tópico de Kafka para ser procesadas por un servicio de analítica en tiempo real. Los comandos transaccionales de la sala (creación, cierre, notificaciones) se siguen gestionando con RabbitMQ.
+2. Decisiones de Arquitectura
+2.1. Separación de Responsabilidades
+
+El transporte de audio lo realiza MediaMTX, un servidor SFU (Selective Forwarding Unit) de código abierto. Su única función es recibir el audio del emisor y distribuirlo a los oyentes. El audio nunca pasa por los microservicios de Spring Boot.
+
+La lógica de negocio de las salas (creación, cierre, autenticación, publicación de eventos) vive en un nuevo microservicio llamado ms-live.
+
+El control de acceso (verificar si un oyente sigue al creador) se delega a ms-users, que ya tiene la tabla follows en la base de datos Neon.
+
+La analítica en tiempo real (oyentes activos, reacciones por minuto) la realiza un nuevo microservicio llamado ms-analytics, que consume los eventos de Kafka.
+
+Los comandos transaccionales (notificar a seguidores cuando se crea una sala, eliminar datos al cerrarla) se siguen gestionando con RabbitMQ, manteniendo la integración existente.
+2.2. Elección de MediaMTX
+
+Se evaluaron varias alternativas para el transporte de audio. La topología P2P Mesh (conexión directa entre navegadores) se descartó porque el ancho de banda del emisor colapsa con más de tres o cuatro oyentes. Icecast se descartó porque no acepta audio WebRTC nativo desde el navegador; requiere software externo para publicar. Caster.fm se descartó por ser un servicio de terceros con dependencia externa, anuncios en el plan gratuito y sin control sobre la autenticación. LiveKit y Jitsi se descartaron por ser más complejos de desplegar y estar sobredimensionados para solo audio.
+
+Se eligió MediaMTX porque es un servidor SFU de código abierto, sin dependencias, ligero, con soporte nativo para WHIP (publicar WebRTC) y WHEP (escuchar WebRTC), y con autenticación HTTP externa que permite integrar la lógica de seguidores sin generar tokens especiales.
+2.3. Flujo de Audio y Control
+
+El flujo de audio funciona así: el emisor captura su micrófono y envía el audio a MediaMTX vía WHIP. MediaMTX recibe el stream y lo mantiene en memoria. Los oyentes se conectan a MediaMTX vía WHEP y reciben el audio. El audio nunca pasa por los microservicios de Spring Boot.
+
+El flujo de control funciona así: cuando un oyente intenta conectarse a una sala, MediaMTX hace una petición HTTP a ms-live preguntando si ese usuario puede escuchar esa sala. ms-live consulta a ms-users si el oyente sigue al creador. Si la respuesta es afirmativa, MediaMTX permite la conexión. Si no, la rechaza.
+2.4. Despliegue de MediaMTX
+
+MediaMTX se despliega en una instancia EC2 dedicada (puede ser t3.micro dentro del Free Tier). Los puertos del Security Group son: 8889/TCP para la señalización WHIP/WHEP, 8189/UDP para el tráfico de medios WebRTC (ICE), y 8888/TCP para HLS (opcional, como fallback para audiencias masivas). La instancia tiene una IP pública o Elastic IP asignada. El puerto de la API de control (9997) no se expone a Internet; solo es accesible desde la VPC.
+2.5. Autenticación y Privacidad
+
+Se decidió usar autenticación HTTP externa en MediaMTX. MediaMTX delega la decisión de acceso a ms-live. ms-live recibe el cognito_sub del usuario (que MediaMTX pasa como identificador), el nombre de la sala (el path) y la acción (publish o read). Para publish, solo el creador de la sala puede publicar en su propio path. Para read, solo los seguidores del creador pueden leer el stream. La verificación de seguidores se hace consultando a ms-users, que ya tiene la tabla follows en Neon.
+
+La ventaja de esta decisión es que no se necesitan generar tokens JWT especiales para MediaMTX; se reutiliza la lógica de negocio existente.
+2.6. Integración con Kafka
+
+Se define el tópico heypudu.live.events para publicar eventos de sala. Los eventos a publicar son: ROOM_CREATED (cuando un usuario crea una sala), LISTENER_JOINED (cuando un oyente se conecta), LISTENER_LEFT (cuando un oyente se desconecta) y REACTION (cuando un oyente envía una reacción como aplauso o corazón).
+
+El productor es ms-live, que publica estos eventos en Kafka usando un DTO estructurado llamado LiveRoomEvent.
+
+El consumidor es ms-analytics, que consume el tópico y calcula en tiempo real los oyentes activos por sala, las reacciones por minuto y las salas más populares.
+
+Se definen dos consumer groups: live-analytics-group para el servicio de analítica en tiempo real, y live-audit-group para el servicio que guarda el histórico de eventos en S3 o base de datos.
+2.7. Relación con RabbitMQ
+
+RabbitMQ se mantiene para comandos transaccionales. Cuando se crea una sala, se publica un comando room.created en RabbitMQ para notificar a los seguidores (similar a user.followed). Cuando se cierra una sala, se publica un comando room.closed para que ms-interactions elimine las reacciones asociadas.
+
+Kafka se usa para streaming de eventos. Las reacciones de los oyentes (que pueden ser miles por minuto) se publican en Kafka para analítica. El histórico de eventos se retiene en Kafka para reprocesamiento.
+
+La justificación es que RabbitMQ borra el mensaje tras el ACK, mientras que Kafka lo retiene. Para analítica histórica y reprocesamiento, Kafka es la herramienta correcta.
+3. Componentes Nuevos o Modificados
+3.1. ms-live (Nuevo Microservicio)
+
+Sus responsabilidades son: gestionar la creación y cierre de salas (persistencia en Neon), exponer el endpoint de autenticación para MediaMTX, publicar eventos de sala en Kafka y publicar comandos de sala en RabbitMQ.
+
+Sus endpoints principales son: POST /api/v1/live/rooms para crear una sala, DELETE /api/v1/live/rooms/{id} para cerrar una sala, POST /api/v1/internal/mediamtx/auth como endpoint de autenticación para MediaMTX, y GET /api/v1/live/rooms/{id}/listeners para obtener oyentes activos.
+3.2. ms-users (Modificado)
+
+Se añade un endpoint interno para verificar si un usuario sigue a otro. La ruta es GET /api/v1/internal/users/by-cognito/{cognitoSubCreador}/followers/check?followerCognitoSub={cognitoSubOyente}. La respuesta es un booleano que indica si el oyente sigue al creador.
+3.3. ms-analytics (Nuevo Microservicio o Módulo en ms-live)
+
+Sus responsabilidades son: consumir el tópico heypudu.live.events de Kafka, calcular métricas en tiempo real (oyentes activos, reacciones por minuto) y exponer un endpoint REST para que el frontend consulte las métricas.
+
+Su endpoint es GET /api/v1/analytics/rooms/{id}/stats, que retorna oyentes activos y reacciones totales.
+3.4. Frontend (React)
+
+Se añaden nuevas pantallas. La pantalla de "Crear Sala" es un formulario para iniciar una transmisión con título y descripción. La pantalla de "Sala en Vivo (Emisor)" captura el micrófono y lo envía a MediaMTX vía WHIP, y muestra el número de oyentes consultando a ms-analytics. La pantalla de "Sala en Vivo (Oyente)" se conecta a MediaMTX vía WHEP para escuchar y muestra botones de reacción que envían eventos a ms-live (y de ahí a Kafka).
+
+La restricción de acceso en el frontend funciona así: antes de mostrar el botón "Escuchar", el frontend consulta a ms-users si el usuario sigue al creador. Si no lo sigue, muestra un mensaje indicando que debe seguir al usuario para escuchar su sala.
+4. Decisiones de Seguridad
+
+Todos los usuarios se autentican con AWS Cognito y reciben un JWT. El JWT se envía en el header Authorization a ms-live. ms-live extrae el cognito_sub del JWT y lo usa para las verificaciones.
+
+MediaMTX no maneja JWT directamente. Delega la decisión a ms-live vía HTTP. La petición de MediaMTX a ms-live se hace por la red privada de la VPC, no por Internet. El endpoint de autenticación de ms-live está protegido por un token de servicio (a definir en la implementación, pero es un requisito).
+
+Solo los seguidores del creador pueden escuchar. La verificación se hace en el backend (ms-live + ms-users), no en el frontend. Si un usuario deja de seguir al creador mientras escucha, la conexión no se corta automáticamente; esto es una limitación conocida, y se puede implementar un chequeo periódico si es necesario.
+5. Decisiones de Despliegue
+
+MediaMTX se ejecuta en una EC2 dedicada (nueva instancia, t3.micro). ms-live y ms-analytics se ejecutan en la EC2 backend junto a los demás microservicios. Kafka se ejecuta en una EC2 dedicada (nueva instancia, con Zookeeper y Kafka UI). RabbitMQ sigue en la EC2 existente. El frontend sigue en Vercel.
+
+MediaMTX en t3.micro y Kafka en t3.micro están dentro del Free Tier de AWS (750 horas/mes). El tráfico de datos de audio WebRTC consume poco ancho de banda; para una demo, no debería superar el límite gratuito de AWS.
+
+MediaMTX se levanta con un archivo docker-compose.mediamtx.yml (similar al de RabbitMQ). Kafka se levanta con un archivo docker-compose.kafka.yml que incluye Zookeeper, el Broker y Kafka UI. Ambos archivos se ejecutan en sus respectivas EC2.
+6. Limitaciones Conocidas y Trabajo Futuro
+
+Para la demo, una instancia de MediaMTX maneja decenas de oyentes WebRTC. Para miles de oyentes en producción, se necesitaría un patrón Origin-Edge (múltiples réplicas de MediaMTX detrás de un balanceador) o usar HLS como fallback para la audiencia pasiva.
+
+WebRTC tiene baja latencia (menos de 500 ms), ideal para interacción en vivo. HLS tiene mayor latencia (2 a 10 segundos), pero es más escalable.
+
+Las salas se guardan en Neon (base de datos de ms-live). Los eventos de Kafka se retienen según la configuración del tópico (por ejemplo, 7 días).
+
+Como trabajo futuro, se puede implementar un sistema de salas programadas (con fecha y hora), añadir transcripción de audio en tiempo real usando servicios de AWS Transcribe, o implementar un sistema de regalos o monedas para los creadores.
