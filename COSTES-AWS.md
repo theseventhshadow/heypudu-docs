@@ -26,7 +26,7 @@ hasta la demo. **Los importes son estimaciones** con precios on-demand de
 |---|---|---|
 | EC2 `heypuduback` | t3.small (`i-05b808f859f54a876`) | 0,0208 USD/h |
 | EC2 `heypudu-rabbitmq` | t3.small (`i-0f42928aad2cef8bb`) | 0,0208 USD/h |
-| EC2 `heypudu-live` | t3.small (`i-09ea2f39fef85c88b`) | 0,0208 USD/h |
+| EC2 `heypudu-live` | **t3.medium** (`i-09ea2f39fef85c88b`) — subida el 23-11 para el clúster con ZooKeeper | 0,0416 USD/h |
 | ALB `heypudu-alb` | base 2 AZ | 0,0225 USD/h + LCU |
 | IPv4 públicas | `35.170.42.143` (EIP) + 2 del ALB | 0,005 USD/h cada una |
 | EBS | 36 GB gp3 en total | 0,08 USD/GB-mes |
@@ -55,8 +55,11 @@ despreciables a este volumen.
 
 | Estado | Coste por hora | Coste por día |
 |---|---|---|
-| Todo encendido | ≈ 0,109 USD/h | ≈ 2,62 USD |
+| Todo encendido | ≈ 0,130 USD/h | ≈ 3,12 USD |
 | Instancias paradas (siguen ALB, IPs y EBS) | ≈ 0,047 USD/h | ≈ 1,13 USD |
+
+El swap de 2 GB de la EC2 3 vive en el mismo volumen gp3, así que no añade
+coste de almacenamiento apreciable (~0,16 USD/mes).
 
 El ALB y las direcciones IP se cobran aunque las instancias estén detenidas.
 La Elastic IP no debe liberarse antes de la demo: cambiaría
@@ -64,13 +67,16 @@ La Elastic IP no debe liberarse antes de la demo: cambiaría
 
 ---
 
-## Proyección al 26-11 (120 h)
+## Proyección al 26-11
+
+Con la EC2 3 en `t3.medium` el ritmo sube ~0,02 USD/h. Escenarios desde el
+corte del 21-11 (120 h hasta la demo):
 
 | Escenario | Coste estimado | Disponible al final |
 |---|---|---|
-| Todo encendido 24/7 | ≈ 13 USD | ≈ 20 USD |
-| Apagado de noche, encendido ~4 h/día | ≈ 7 USD | ≈ 26 USD |
-| Apagado salvo ensayo y demo (~12 h) | ≈ 6 USD | ≈ 27 USD |
+| Todo encendido 24/7 | ≈ 15 USD | ≈ 18 USD |
+| Apagado de noche, encendido ~4 h/día | ≈ 8 USD | ≈ 25 USD |
+| Apagado salvo ensayo y demo (~12 h) | ≈ 7 USD | ≈ 26 USD |
 
 Plan elegido: instancias apagadas cuando no se esté probando, todo encendido
 el miércoles (ensayo) y el jueves (demo).
@@ -85,6 +91,7 @@ consultarlo):
 | Fecha | Consumido (USD) | Disponible (USD) | Δ del día | Notas |
 |---|---|---|---|---|
 | 21-11-2026 | 17,00 | 33,00 | — | Corte inicial; 3 instancias encendidas |
+| 23-11-2026 | | | | EC2 3 pasa a t3.medium + ZooKeeper; nuevo ritmo ≈0,13 USD/h |
 | 22-11-2026 | | | | |
 | 23-11-2026 | | | | |
 | 24-11-2026 | | | | |

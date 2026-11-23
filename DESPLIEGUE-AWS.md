@@ -992,10 +992,10 @@ curl -sI https://live.<dominio> | head -1   # HTTP/2 404 (MediaMTX sin path) => 
 Desde el navegador (Vercel): crear sala, publicar, escuchar desde otra cuenta y reaccionar. En Kafka:
 
 ```bash
-docker exec heypudu-kafka /opt/kafka/bin/kafka-consumer-groups.sh \
-  --bootstrap-server localhost:9092 --describe --group live-analytics-group
-docker exec heypudu-kafka /opt/kafka/bin/kafka-consumer-groups.sh \
-  --bootstrap-server localhost:9092 --describe --group live-audit-group
+docker exec heypudu-broker1 kafka-consumer-groups \
+  --bootstrap-server broker1:9092 --describe --group live-analytics-group
+docker exec heypudu-broker1 kafka-consumer-groups \
+  --bootstrap-server broker1:9092 --describe --group live-audit-group
 ```
 
 ### 17.9 Limpieza al terminar la demo
@@ -1011,15 +1011,15 @@ Recursos creados en la cuenta `561816430875` (rol `voclabs`, `us-east-1`):
 | Recurso | Valor |
 |---|---|
 | Security Group | `heypudu-live-sg` = `sg-0b2a5ba3e54516cb2` |
-| Instancia | `heypudu-live` = `i-09ea2f39fef85c88b` (t3.small, `10.0.7.159`, us-east-1a, Amazon Linux 2023, 20 GB gp3) |
+| Instancia | `heypudu-live` = `i-09ea2f39fef85c88b` (**t3.medium**, `10.0.7.159`, us-east-1a, Amazon Linux 2023, 20 GB gp3, swap de 2 GB) |
 | Elastic IP | `35.170.42.143` (`eipalloc-0d43c4b1b8083fce5`) |
-| Target Groups | `heypudu-live-tg` (`8086`) y `heypudu-analytics-tg` (`8087`), ambos **healthy** |
-| Reglas del listener :80 | `11` `/api/v1/internal/*` → 403 · `12` `/api/v1/live/*` → live TG · `13` `/api/v1/analytics/*` → analytics TG |
+| Target Groups | `heypudu-live-tg` (`8086`), `heypudu-analytics-tg` (`8087`) y `heypudu-kafka-admin-tg` (`8088`), todos **healthy** |
+| Reglas del listener :80 | `11` `/api/v1/internal/*` → 403 · `12` `/api/v1/live/*` → live TG · `13` `/api/v1/analytics/*` → analytics TG · `14` `/api/v1/admin/kafka/*` → kafka-admin TG |
 | Host de MediaMTX | `35-170-42-143.sslip.io` (TLS de Let's Encrypt emitido por Caddy) |
 
 Reglas de red relevantes:
 
-- `heypudu-live-sg`: `22` desde la IP doméstica, `80` y `443` desde `0.0.0.0/0`, `8189/udp` desde `0.0.0.0/0`, `8086` y `8087` desde el SG del ALB.
+- `heypudu-live-sg`: `22` desde la IP doméstica, `80` y `443` desde `0.0.0.0/0`, `8189/udp` desde `0.0.0.0/0`, `8086`, `8087` y `8088` desde el SG del ALB, `9192-9193` desde el SG del backend (listener externo de Kafka).
 - SG del backend: `8082` desde `heypudu-live-sg` (para `ms-live` → `ms-users`).
 - SG de RabbitMQ: `5672` desde `heypudu-live-sg`.
 
@@ -1039,6 +1039,95 @@ particiones asignadas y `{"status":"UP"}` en `8086` y `8087`.
 
 `live-prod.env` se generó reutilizando las credenciales de producción de la
 EC2 1 (Neon y RabbitMQ) y no se versiona (`live-prod.env` está en `.gitignore`).
+
+---
+
+## 18. Evaluación Parcial 5 — Kafka con ZooKeeper
+
+La pauta de la EP5 exige **ZooKeeper + brokers**, **dos tópicos**, un
+**microservicio administrador de Kafka** y **manejo de errores con reintentos**.
+El clúster KRaft de un solo broker de la fase 8 no cumplía esos puntos, así que
+se migró el despliegue completo.
+
+### 18.1 Antes y después
+
+| Aspecto | Fase 8 (KRaft) | Ahora (EP5) |
+|---|---|---|
+| Consenso | KRaft, 1 nodo `broker+controller` | **ZooKeeper 3.9 + 2 brokers** |
+| Tópicos | 1 (`heypudu.live.events`) | **2** + sus DLT |
+| Réplicas | RF=1 | **RF=2** |
+| Consumidores | ACK manual | **`DefaultErrorHandler` + DLT** |
+| Administración | `kafka-init` (script) | `kafka-init` **+ `ms-kafka-admin`** |
+| Instancia | t3.small, 1,9 GB | **t3.medium, 3,8 GB + swap 2 GB** |
+
+Kafka 4.x eliminó ZooKeeper, por eso las imágenes quedan fijadas en la línea
+7.9.0 de Confluent (Kafka 3.9).
+
+### 18.2 Topología
+
+```
+EC2 1 (t3.small)                        EC2 3 (t3.medium)
+ms-posts :8083 ─── 9192/9193 ──────►    broker1 + broker2 ◄── ZooKeeper :2181
+  (listener EXTERNAL)                     ▲        ▲
+                                          │        │
+                             ms-live :8086  ms-analytics :8087
+                             ms-kafka-admin :8088
+                                   │
+                          MediaMTX + Caddy (TLS)
+```
+
+`ms-posts` corre en otra instancia y publica por el listener externo; el resto
+usa el listener interno `broker1:9092,broker2:9092`.
+
+### 18.3 Tópicos y grupos
+
+| Tópico | Particiones | RF | Retención | Productor | Consumidores |
+|---|---|---|---|---|---|
+| `heypudu.live.events` | 3 | 2 | 7 días | `ms-live` | `live-analytics-group`, `live-audit-group` |
+| `heypudu.posts.events` | 2 | 2 | 3 días | `ms-posts` | `posts-analytics-group` |
+| `heypudu.live.events.DLT` | 3 | 2 | 30 días | `ms-analytics` | inspección manual |
+| `heypudu.posts.events.DLT` | 2 | 2 | 30 días | `ms-analytics` | inspección manual |
+
+Todos con `cleanup.policy=delete` y `min.insync.replicas=1` (tolera el reinicio
+de un broker sin bloquear la publicación).
+
+### 18.4 Cambios en la instancia
+
+- Tipo cambiado de `t3.small` a **`t3.medium`** (stop → modify → start; la EIP
+  y el registro en los target groups se mantienen).
+- **Swap de 2 GB** en `/swapfile`, persistente en `/etc/fstab`, con
+  `vm.swappiness=10`.
+- Motivo: ZooKeeper (384m) + 2 brokers (700m cada uno) ya no caben en 1,9 GB
+  junto a `ms-live`, `ms-analytics`, `ms-kafka-admin`, MediaMTX y Caddy.
+
+### 18.5 Administrador de Kafka
+
+`ms-kafka-admin` (puerto 8088) expone el `AdminClient` por REST con
+`ROLE_ADMIN`:
+
+| Método | Ruta |
+|---|---|
+| `GET` | `/api/v1/admin/kafka/cluster` |
+| `GET` `POST` | `/api/v1/admin/kafka/topics` |
+| `GET` `DELETE` | `/api/v1/admin/kafka/topics/{topic}` |
+| `PATCH` | `/api/v1/admin/kafka/topics/{topic}/config` |
+| `GET` | `/api/v1/admin/kafka/groups` · `/groups/{groupId}` |
+
+Recursos asociados: target group `heypudu-kafka-admin-tg` (8088), regla `14`
+del listener del ALB y `8088` abierto en `heypudu-live-sg` desde el SG del ALB.
+
+### 18.6 Verificación realizada
+
+| Prueba | Resultado |
+|---|---|
+| Sala en vivo (crear, escuchar, reaccionar) | `ROOM_CREATED`, `LISTENER_JOINED/LEFT` y `REACTION` en `heypudu.live.events` |
+| Publicación nueva | `POST_CREATED` en `heypudu.posts.events`, LAG 0 en `posts-analytics-group` |
+| Mensaje inválido (`{}`) en el tópico de publicaciones | Recuperado en `heypudu.posts.events.DLT`, offset confirmado y partición desbloqueada |
+| `ms-kafka-admin` | Target **healthy**; `/api/v1/admin/kafka/*` responde `401` sin token (ruta correcta) |
+| Grupos de consumo | `live-analytics-group`, `live-audit-group` y `posts-analytics-group` asignados |
+
+Para el coste actualizado (t3.medium) ver `COSTES-AWS.md`.
+
 
 
 
