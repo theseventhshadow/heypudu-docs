@@ -20,6 +20,7 @@ El código vive en repositorios aparte:
 | [`revision-integracion-heypudu.txt`](./revision-integracion-heypudu.txt) | Revisión de la integración entre microservicios y frontend. |
 | [`DESPLIEGUE-AWS.md`](./DESPLIEGUE-AWS.md) | Despliegue completo en AWS: VPC, Security Groups, ALB, EC2, TLS y verificación. |
 | [`COSTES-AWS.md`](./COSTES-AWS.md) | Consumo del crédito del laboratorio y seguimiento diario hasta la demo. |
+| [`IDEAS-FUTURAS.md`](./IDEAS-FUTURAS.md) | Ideas y mejoras fuera del alcance entregado, con esfuerzo, impacto y dependencias. |
 | [`EP5_DSY1107_Estudiante_encargo.pdf`](./EP5_DSY1107_Estudiante_encargo.pdf) | Enunciado y pauta de la Evaluación Parcial N°5 (Kafka). |
 | [`aws-backups/`](./aws-backups) | Snapshots JSON de recursos de AWS (security groups, reglas y target groups) del 2026-11-20. |
 
