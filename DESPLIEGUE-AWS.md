@@ -1125,8 +1125,40 @@ del listener del ALB y `8088` abierto en `heypudu-live-sg` desde el SG del ALB.
 | Mensaje inválido (`{}`) en el tópico de publicaciones | Recuperado en `heypudu.posts.events.DLT`, offset confirmado y partición desbloqueada |
 | `ms-kafka-admin` | Target **healthy**; `/api/v1/admin/kafka/*` responde `401` sin token (ruta correcta) |
 | Grupos de consumo | `live-analytics-group`, `live-audit-group` y `posts-analytics-group` asignados |
+| Kafka UI | `200` en `127.0.0.1:8090`; clúster `heypudu` **online** con 2 brokers, 5 tópicos y `LAG=0` |
 
 Para el coste actualizado (t3.medium) ver `COSTES-AWS.md`.
+
+### 18.7 Consola web de Kafka (Kafka UI)
+
+`provectuslabs/kafka-ui:v0.7.2` corre en la misma EC2 y comparte la red Docker
+con los brokers, así que usa el listener interno. Permite ver en pantalla lo
+mismo que en local: tópicos y particiones, mensajes sin consumirlos, grupos de
+consumo con su LAG y el contenido de los `.DLT`.
+
+| Aspecto | Valor |
+|---|---|
+| Servicio | `kafka-ui` en `docker-compose.live.prod.yml` |
+| Publicación | `127.0.0.1:8090:8080` (**solo loopback**) |
+| Bootstrap | `broker1:9092,broker2:9092` |
+| RAM | `mem_limit: 420m`, `JAVA_OPTS` `-Xmx256m` |
+
+No se añade regla al ALB ni puerto al Security Group: Kafka UI no tiene
+autenticación propia. El acceso desde el equipo de desarrollo es por túnel SSH:
+
+```bash
+ssh -i clave.pem -N -L 8090:localhost:8090 ec2-user@35.170.42.143
+# navegador: http://localhost:8090  -> cluster "heypudu"
+```
+
+Verificación:
+
+```bash
+curl -s localhost:8090/api/clusters
+# [{"name":"heypudu","status":"online","brokerCount":2,"topicCount":5,...}]
+curl -s localhost:8090/api/clusters/heypudu/topics | head -c 200
+ss -ltnp | grep 8090     # 127.0.0.1:8090  (no 0.0.0.0)
+```
 
 
 

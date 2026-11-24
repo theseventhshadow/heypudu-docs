@@ -261,14 +261,33 @@ curl -H "Authorization: Bearer $TOKEN" \
 | Archivo | Contenido | Uso |
 |---|---|---|
 | `docker-compose.kafka.yml` | ZooKeeper + 2 brokers + `kafka-init` + Kafka-UI (`:8090`) | Desarrollo local |
-| `docker-compose.live.prod.yml` | ZooKeeper + 2 brokers + `kafka-init` + `ms-live` + `ms-analytics` + `ms-kafka-admin` + MediaMTX + Caddy | Producción (EC2 de salas) |
+| `docker-compose.live.prod.yml` | ZooKeeper + 2 brokers + `kafka-init` + Kafka-UI + `ms-live` + `ms-analytics` + `ms-kafka-admin` + MediaMTX + Caddy | Producción (EC2 de salas) |
 | `kafka/init-topics.sh` | Declaración idempotente de los dos tópicos y sus DLT | Arranque de ambos entornos |
 
 Las imágenes están **fijadas en Confluent 7.9.0** (Kafka 3.9) porque Kafka 4.x
 eliminó ZooKeeper. Los brokers exponen `INTERNAL` (para los servicios de la
 misma EC2) y `EXTERNAL` en 9192/9193 (para `ms-posts` desde la otra instancia).
 
-Kafka-UI en local: `http://localhost:8090`.
+### Consola web (Kafka UI)
+
+Equivalente al *management UI* de RabbitMQ: tópicos con sus particiones e ISR,
+consulta de mensajes sin consumirlos, grupos de consumo con el LAG por
+partición y creación o borrado de tópicos.
+
+| Entorno | Acceso |
+|---|---|
+| Local | `http://localhost:8090` tras `docker compose -f docker-compose.kafka.yml up -d` |
+| Producción | Publicada solo en `127.0.0.1:8090`; se entra por túnel SSH |
+
+```bash
+# en el equipo de desarrollo, contra la EC2 de salas
+ssh -i clave.pem -N -L 8090:localhost:8090 ec2-user@35.170.42.143
+# luego: http://localhost:8090  ->  cluster "heypudu"
+```
+
+No se publica en el ALB a propósito: Kafka UI no trae autenticación propia y
+quedaría abierta a internet. El acceso administrativo con JWT lo cubre
+`ms-kafka-admin` (§7).
 
 ---
 
@@ -318,7 +337,7 @@ ms-kafka-admin/src/main/java/com/heypudu/ms_kafka_admin/{config,controller,servi
 | Productores y consumidores conectados a tópicos Kafka | `ms-live`, `ms-posts` (productores); `ms-analytics` (3 grupos) |
 | Microservicio administrador de Kafka (crear, modificar y eliminar tópicos y configuraciones) | `ms-kafka-admin`, endpoints de §7 |
 | Compose con **ZooKeeper y brokers** | `docker-compose.kafka.yml` y `docker-compose.live.prod.yml` |
-| Compose con **Kafka-UI** | Servicio `kafka-ui` en `docker-compose.kafka.yml` (`:8090`) |
+| Compose con **Kafka-UI** | Servicio `kafka-ui` en `docker-compose.kafka.yml` (`:8090`) y en `docker-compose.live.prod.yml` (loopback + túnel SSH) |
 | RabbitMQ sin afectar lo previo | `docker-compose.rabbit.yml`, `ms-heypudu-rabbit-admin`, colas y DLQ intactas |
 | Filtros JWT del IDaaS | `OAuth2 Resource Server` en los siete microservicios; `ROLE_ADMIN` en el administrador |
 | Frontend con login y JWT en las llamadas | Amplify + `AuthContext` + interceptor de `httpClient` |
