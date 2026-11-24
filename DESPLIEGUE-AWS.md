@@ -157,6 +157,11 @@ Luego se abre `http://localhost:15672` en el equipo local.
 La alternativa para administrar la instancia sin SSH directo es Session
 Manager; no se abre el puerto `22` públicamente para RabbitMQ.
 
+Para acceder a KafkaUI seguir las siguientes indicaciones:
+```bash
+ssh -i backhp.pem -N -L 8090:localhost:8090 ec2-user@35.170.42.143
+```
+
 ### Instalación de Docker
 
 ```bash
