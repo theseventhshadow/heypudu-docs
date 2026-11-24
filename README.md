@@ -17,6 +17,7 @@ El código vive en repositorios aparte:
 | [`contexto de rabbitmq.txt`](./contexto%20de%20rabbitmq.txt) | Notas sobre el clúster RabbitMQ: topología, colas y flujos. |
 | [`respecto a kafka.txt`](./respecto%20a%20kafka.txt) | Notas sobre Kafka: tópico, grupos de consumo y eventos. |
 | [`PLAN-IMPLEMENTACION-KAFKA.md`](./PLAN-IMPLEMENTACION-KAFKA.md) | Plan de implementación de las salas de audio en vivo con Kafka. |
+| [`KAFKA-IMPLEMENTACION.md`](./KAFKA-IMPLEMENTACION.md) | Cómo está implementado Kafka: funciones, productores, consumidores, DLT, administración, operación y cumplimiento de la pauta EP5. |
 | [`revision-integracion-heypudu.txt`](./revision-integracion-heypudu.txt) | Revisión de la integración entre microservicios y frontend. |
 | [`DESPLIEGUE-AWS.md`](./DESPLIEGUE-AWS.md) | Despliegue completo en AWS: VPC, Security Groups, ALB, EC2, TLS y verificación. |
 | [`COSTES-AWS.md`](./COSTES-AWS.md) | Consumo del crédito del laboratorio y seguimiento diario hasta la demo. |
