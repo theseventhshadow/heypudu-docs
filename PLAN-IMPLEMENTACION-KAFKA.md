@@ -1,10 +1,10 @@
 # Plan de implementación — Kafka y Salas de Audio en Vivo
 
 **Proyecto:** heyPudú!
-**Versión del documento:** 1.1
-**Fecha:** 18-11-2026
+**Versión del documento:** 1.2
+**Fecha:** 24-11-2026
 **Base técnica:** `respecto a kafka.txt` (Documento de Decisiones Técnicas v1.0)
-**Base de estado real:** `feature/ms-live` = `040e25e` (backend), `main`/`develop` = `5864a4b`, frontend = `e02d6ef`
+**Base de estado real:** backend `main` = `c363210`, frontend `main` = `834cb96`, clúster desplegado con ZooKeeper + 2 brokers
 **Propósito:** servir de guía única y viva para construir la funcionalidad de Salas de Audio en Vivo (Kafka + MediaMTX) en backend y frontend, marcando qué está terminado y qué falta.
 
 > **Leyenda de estado**
@@ -28,18 +28,19 @@
 | RabbitMQ para salas | `[LISTO]` | `room.created` → notificación a seguidores; `room.closed` → limpieza de reacciones vía `q.heypudu.live.command` + DLQ, verificado end-to-end |
 | Tabla `follows` y consulta de seguimiento | `[LISTO]` | `existsByFollowerIdAndFollowedId` + endpoint interno implementado |
 | Frontend base (auth, HTTP, router) | `[LISTO]` | Axios con JWT, Amplify, React Router 7 |
-| **Kafka (infra, productor, consumidor)** | `[LISTO]` | Tópico, productor y dos consumer groups (`live-analytics-group`, `live-audit-group`) verificados con emisor real y `LAG=0` |
-| **`ms-live`** | `[LISTO]` | CRUD, `/access`, reacciones persistidas, productor Kafka, RabbitMQ y auth de MediaMTX; faltan tests automatizados |
-| **`ms-analytics`** | `[LISTO]` | `/stats` con oyentes y reacciones, idempotencia y auditoría persistida en `heypudu_analytics.live_events_audit` |
-| **MediaMTX (SFU + auth)** | `[LISTO]` en local | Auth HTTP y hooks implementados; audio real publicado y escuchado en navegador. Falta HTTPS/WSS para el despliegue |
-| **Pantallas de salas en vivo** | `[LISTO]` | F1–F3 implementadas y probadas (`/en-vivo`, `/en-vivo/crear`, `/en-vivo/:roomId`); quedan F4 parcial y F5 |
+| **Kafka (infra, productor, consumidor)** | `[LISTO]` | **ZooKeeper 3.9 + 2 brokers** en la EC2 de salas; dos tópicos con `RF=2`, tres consumer groups y sus DLT, verificados con eventos reales y `LAG=0` |
+| **`ms-live`** | `[LISTO]` | CRUD, `/access`, reacciones persistidas, productor Kafka, RabbitMQ y auth de MediaMTX; falta test automatizado de auth |
+| **`ms-analytics`** | `[LISTO]` | `/stats` de salas y de publicaciones, idempotencia, auditoría en `heypudu_analytics.live_events_audit` y reintentos con DLT |
+| **`ms-kafka-admin`** | `[LISTO]` | Administrador REST de tópicos, configuraciones y grupos sobre `AdminClient`; desplegado con target group propio y regla del ALB |
+| **MediaMTX (SFU + auth)** | `[LISTO]` | Auth HTTP y hooks; HTTPS/WSS con Caddy y certificado de Let's Encrypt en el despliegue |
+| **Pantallas de salas en vivo** | `[LISTO]` | `/en-vivo`, `/en-vivo/crear` y `/en-vivo/:roomId`, con contador de oyentes, reacciones y cierre automático al terminar la sala |
 | Endpoint `followers/check` en `ms-users` | `[LISTO]` | Implementado y probado end-to-end desde `ms-live` |
-| Bloqueo de `/api/v1/internal/**` en API Gateway | `[PENDIENTE]` | Hoy el wildcard lo expone a Internet |
-| Tests automatizados | `[PARCIAL]` | Solo `ms-users` tiene test; faltan `ms-live`, `ms-analytics` y los workflows |
-| CI/CD | `[PENDIENTE]` | Los 4 workflows están vacíos (0 bytes) en GitHub |
+| Bloqueo de `/api/v1/internal/**` en el ALB | `[LISTO]` | Regla con respuesta fija `403` (verificado por el camino público) |
+| Tests automatizados | `[PARCIAL]` | `ms-users` y `ms-live` (`MediamtxAuthServiceTest`); faltan `ms-analytics` y los workflows |
+| CI/CD | `[PENDIENTE]` | Los 4 workflows están en subcarpetas (`ms-*/.github`), GitHub no los ejecuta |
 | RabbitMQ en entorno local | `[PARCIAL]` | Funciona con `docker-compose.rabbit.yml`; `docker-compose.yml` no lo incluye |
 
-**Progreso global de la feature:** fases 1–7 cerradas, frontend F1–F5 cerradas (F6 parcial) y fase 8 (despliegue AWS) sin empezar.
+**Progreso global de la feature:** fases 1–8 cerradas; frontend F1–F5 cerradas (F6 parcial). Pendiente: pruebas de `ms-analytics` y activar CI/CD.
 
 ---
 
@@ -86,14 +87,17 @@
 
 | Elemento | Valor |
 |---|---|
-| Tópico | `heypudu.live.events` |
-| Particiones | 3 (demo: 1 broker, RF=1) |
-| Réplicas | 1 |
-| Retención | 7 días (`retention.ms=604800000`) |
-| Clave del mensaje | `roomId` (garantiza orden por sala) |
-| Productor | `ms-live` |
-| Consumidores | `live-analytics-group` (`ms-analytics`), `live-audit-group` (histórico, opcional) |
-| Auto-create topics | `false` (el tópico se declara explícitamente) |
+| Consenso | **ZooKeeper 3.9** (Confluent 7.9.0) + **2 brokers** |
+| Tópico de salas | `heypudu.live.events` — 3 particiones, `RF=2`, retención 7 días |
+| Tópico de publicaciones | `heypudu.posts.events` — 2 particiones, `RF=2`, retención 3 días |
+| Tópicos DLT | `heypudu.live.events.DLT` (3 particiones) y `heypudu.posts.events.DLT` (2 particiones), retención 30 días |
+| Clave del mensaje | `roomId` en salas y `postId` en publicaciones (orden por entidad) |
+| Productores | `ms-live` (salas) y `ms-posts` (publicaciones) |
+| Consumidores | `live-analytics-group`, `live-audit-group` y `posts-analytics-group` en `ms-analytics` |
+| Listener interno | `broker1:9092,broker2:9092` para los servicios de la EC2 de salas |
+| Listener externo | `10.0.7.159:9192,10.0.7.159:9193` para `ms-posts`, que vive en la EC2 del backend |
+| Auto-create topics | `false` (los declara `kafka-init`) |
+| Administración | `ms-kafka-admin` (`AdminClient` por REST, `ROLE_ADMIN`) |
 
 **DTO `LiveRoomEvent`** (paquete `com.heypudu.ms_live.messaging`):
 
@@ -392,34 +396,41 @@ CREATE UNIQUE INDEX uq_live_room_creator_live
 
 ## 7. Infraestructura y despliegue
 
+Estado real del despliegue (ver `DESPLIEGUE-AWS.md` §17 y §18):
+
 | Componente | Instancia | Puertos | Estado |
 |---|---|---|---|
-| MediaMTX | `t3.micro` + Elastic IP | 8889/TCP, 8189/UDP, 8888/TCP opcional, 9997 interno | `[PENDIENTE]` |
-| Kafka (KRaft) + UI | `t3.micro` | 9092 interno, 9093 controller, 8080 UI por túnel | `[PENDIENTE]` |
-| `ms-live`, `ms-analytics` | EC2 backend | 8086, 8087 | `[PENDIENTE]` |
+| MediaMTX + Caddy (TLS) | EC2 `heypudu-live` (`t3.medium`) + Elastic IP `35.170.42.143` | 80/443 (Caddy), 8189/UDP, 9997 interno | `[LISTO]` |
+| ZooKeeper + 2 brokers | misma EC2 `heypudu-live` | 2181 y 9092 internos, 9192-9193 externos | `[LISTO]` |
+| `ms-live`, `ms-analytics`, `ms-kafka-admin` | misma EC2 `heypudu-live` | 8086, 8087, 8088 | `[LISTO]` |
+| `ms-posts` (productor) | EC2 backend | 8083 | `[LISTO]` |
 | RabbitMQ | EC2 existente | 5672 interno | `[LISTO]` |
-| Frontend | Vercel existente | — | `[LISTO]` (base) |
+| Frontend | Vercel | — | `[LISTO]` |
 
-**Compose Kafka (esquema de referencia):**
+**Compose de referencia (ZooKeeper + 2 brokers):**
 
 ```yaml
 services:
-  kafka:
-    image: apache/kafka:latest
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.9.0
     environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://<IP_PRIVADA>:9092
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    ports: ["8080:8080"]
+      ZOOKEEPER_CLIENT_PORT: 2181
+  broker1:
+    image: confluentinc/cp-kafka:7.9.0
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://broker1:9092,EXTERNAL://<IP_PRIVADA>:9192
+  broker2:
+    image: confluentinc/cp-kafka:7.9.0
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://broker2:9092,EXTERNAL://<IP_PRIVADA>:9193
 ```
 
-> Ajustar imágenes y variables a la versión que se despliegue; verificar `KAFKA_ADVERTISED_LISTENERS` con IP privada, no `localhost`.
+Kafka 4.x eliminó ZooKeeper, por eso las imágenes quedan fijadas en la línea
+7.9.0 (Kafka 3.9).
 
 ---
 
@@ -428,11 +439,13 @@ services:
 ### Pruebas mínimas
 
 - [x] **LISTO** `ms-users`: unitaria de `followers/check` (`FollowServiceImplTest`, commit `040e25e`).
+- [x] **LISTO** `ms-live`: unitaria de `MediamtxAuthServiceTest` (decodificación del `MTX_QUERY` url-encoded, 7 casos).
 - [ ] **PENDIENTE** `ms-live`: `@WebMvcTest` del endpoint de auth (publish del creador, read de seguidor, read de no seguidor, sala cerrada).
 - [ ] **PENDIENTE** `ms-live`: test del productor con Kafka embebido/Testcontainers.
 - [ ] **PENDIENTE** `ms-analytics`: test del conteo con eventos sintéticos (idempotencia incluida).
-- [ ] **PENDIENTE** Prueba de DLQ con mensaje inválido en `q.heypudu.live.command`.
-- [ ] **PENDIENTE** Frontend: `npm run build` + prueba manual guiada.
+- [x] **LISTO** DLT: mensaje inválido (`{}`) en `heypudu.posts.events` recuperado en `heypudu.posts.events.DLT` con el offset confirmado.
+- [x] **LISTO** Prueba de DLQ con mensaje inválido en `q.heypudu.live.command`.
+- [x] **LISTO** Frontend: `npm run build` y prueba manual guiada en Vercel.
 
 ### Guion de demo (evidencia para la evaluación)
 
@@ -448,16 +461,17 @@ services:
 
 ## 9. Riesgos
 
-| Riesgo | Impacto | Mitigación |
+| Riesgo | Impacto | Mitigación aplicada |
 |---|---|---|
-| Memoria insuficiente en `t3.small` al sumar 2 servicios | Contenedores reiniciando en la demo | Subir a `t3.medium` o mover Kafka/MediaMTX |
-| MediaMTX sin TLS y frontend en HTTPS | El navegador bloquea WHIP/WHEP | Certificado + proxy inverso o TLS nativo |
-| CORS del SFU mal configurado | `POST` del SDP falla | Probar con `curl`/`ffmpeg` antes de la UI |
-| `/api/v1/internal/**` expuesto por el wildcard | Cualquiera puede llamar al auth de MediaMTX | Bloquear en API Gateway (Fase 8) |
-| Duplicación de `RabbitTopology` | Routing keys desincronizadas | Añadir constantes en una sola pasada y test de topología |
-| Sin tests ni CI | Regresiones al tocar mensajería | Fase 0 + Fase 8 |
-| Kafka sin idempotencia en consumidor | Conteos inflados tras rebalanceo | Deduplicar por `eventId` |
-| Suplantación de `cognitoSub` en MediaMTX | Acceso indebido a salas | D3: validar JWT |
+| Memoria insuficiente al sumar ZooKeeper y dos brokers | Contenedores reiniciando en la demo | EC2 de salas subida a `t3.medium` + swap de 2 GB |
+| MediaMTX sin TLS y frontend en HTTPS | El navegador bloquea WHIP/WHEP | Caddy con Let's Encrypt sobre `35-170-42-143.sslip.io` |
+| CORS del SFU mal configurado | `POST` del SDP falla | `webrtcAllowOrigins` con el origen de Vercel, verificado |
+| `/api/v1/internal/**` expuesto por el wildcard | Cualquiera puede llamar al auth de MediaMTX | Regla del ALB con respuesta fija `403` |
+| Mensajes defectuosos bloquean una partición | Consumidor detenido | `DefaultErrorHandler` con 3 reintentos y DLT por tópico |
+| Duplicación de `RabbitTopology` | Routing keys desincronizadas | Constantes en una sola clase + topología declarativa |
+| Sin tests ni CI | Regresiones al tocar mensajería | Pendiente: tests de `ms-analytics` y workflows en la raíz |
+| Kafka sin idempotencia en consumidor | Conteos inflados tras rebalanceo | Deduplicación por `eventId` en ambos servicios |
+| Suplantación de `cognitoSub` en MediaMTX | Acceso indebido a salas | Validación del JWT y comparación con el `user` declarado |
 
 ---
 
@@ -473,7 +487,7 @@ services:
 | 5 | `ms-analytics` (consumer groups) | `[LISTO]` — analítica + auditoría |
 | 6 | RabbitMQ `room.created` / `room.closed` | `[LISTO]` |
 | 7 | MediaMTX + auth + hooks | `[LISTO]` — falta HTTPS para despliegue |
-| 8 | Despliegue AWS y bloqueo de internos | `[PENDIENTE]` |
+| 8 | Despliegue AWS y bloqueo de internos | `[LISTO]` — EC2 `t3.medium` con EIP, TLS con Caddy, ALB y reglas, Kafka con ZooKeeper |
 | F1 | Tipos y `liveService` | `[LISTO]` |
 | F2 | Utilidades WHIP/WHEP | `[LISTO]` |
 | F3 | Pantallas de salas | `[LISTO]` |
@@ -491,7 +505,8 @@ services:
 
 **Justificación:** primero se habilita el entorno y la autorización (0-1), luego el dominio de salas (2), después Kafka punta a punta (3-5), en paralelo se prepara el frontend cuando ya hay contratos estables (F1-F3), se cierra la mensajería transaccional (6), se conecta el audio real (7) y solo al final se asegura la plataforma y se despliega (8).
 
-**Estado del orden:** Fase 1 cerrada, Fase 2 en curso. La siguiente es la Fase 3 (infraestructura Kafka local).
+**Estado del orden:** todas las fases cerradas. Lo único abierto son los tests de
+`ms-analytics` y la activación de CI/CD.
 
 > **Regla de oro:** no empezar la Fase 7 (audio) sin haber validado Fases 3-5 con eventos reales. Kafka es el corazón de la evaluación; MediaMTX es el transporte.
 
@@ -503,5 +518,13 @@ services:
 |---|---|---|---|
 | 17-11-2026 | `8a91122` | Creación de `ms-live`: esqueleto, esquema `heypudu_live`, CRUD de salas, `/access`, `docker-compose.yml` e `init-db.sql` | 2 |
 | 18-11-2026 | `040e25e` | Endpoint interno `followers/check` en `ms-users` + test `FollowServiceImplTest` | 1 |
+| 20-11-2026 | `66c9b2f` | Artefactos de despliegue: `docker-compose.live.prod.yml`, `Caddyfile`, `mediamtx.prod.yml`, `live-prod.env.example` | 8 |
+| 21-11-2026 | `da92cf1` | Entrypoint con `envsubst` para MediaMTX y despliegue en la EC2 de salas con TLS | 8 |
+| 21-11-2026 | `679f0ac` | Corrección: MediaMTX entrega `MTX_QUERY` url-encoded; se decodifica en `ms-live` | 7 |
+| 23-11-2026 | `63c7b0e` | Migración de KRaft a ZooKeeper + 2 brokers y segundo tópico con parámetros por flujo | EP5 |
+| 23-11-2026 | `1795150` | Segundo tópico: productor en `ms-posts` y consumidor `posts-analytics-group` en `ms-analytics` | EP5 |
+| 23-11-2026 | `115fb83` | `ms-kafka-admin`: tópicos, configuraciones y grupos sobre `AdminClient` | EP5 |
+| 23-11-2026 | `72f2196` | Reintentos con backoff y tópicos DLT en los consumidores | EP5 |
+| 24-11-2026 | `c363210` | Merge a `main`: Kafka con ZooKeeper, segundo tópico, administrador y DLT | EP5 |
 
 > Añadir una fila por cada commit relevante. El detalle de tareas vive en las secciones 4 y 6.

@@ -6,7 +6,11 @@ Propósito: Registrar las decisiones de diseño, arquitectura y tecnología toma
 > Nota (2026-11-18): este documento es la fuente de decisiones original y se
 > mantiene congelado. Su operacionalización por fases, el estado real de avance
 > y la resolución de las ambigüedades D1-D7 viven en
-> PLAN-IMPLEMENTACION-KAFKA.md (v1.1).
+> PLAN-IMPLEMENTACION-KAFKA.md (v1.2).
+>
+> Nota (2026-11-24): la implementación quedó cerrada y desplegada. Las
+desviaciones respecto a lo decidido aquí están en el anexo final y el detalle
+técnico en DESPLIEGUE-AWS.md (secciones 17 y 18).
 
 1. Contexto y Objetivo
 
@@ -101,3 +105,52 @@ WebRTC tiene baja latencia (menos de 500 ms), ideal para interacción en vivo. H
 Las salas se guardan en Neon (base de datos de ms-live). Los eventos de Kafka se retienen según la configuración del tópico (por ejemplo, 7 días).
 
 Como trabajo futuro, se puede implementar un sistema de salas programadas (con fecha y hora), añadir transcripción de audio en tiempo real usando servicios de AWS Transcribe, o implementar un sistema de regalos o monedas para los creadores.
+
+================================================================================
+ANEXO — ESTADO REAL DE LA IMPLEMENTACIÓN (24-11-2026)
+================================================================================
+
+El cuerpo de este documento se mantiene congelado como registro de las
+decisiones originales. Este anexo recoge qué se implementó y en qué se desvió
+de lo decidido.
+
+Se mantiene tal cual:
+
+- MediaMTX como SFU con WHIP/WHEP y autenticación HTTP delegada a ms-live.
+- Acceso de lectura solo para el creador o sus seguidores, verificado en
+  ms-live contra ms-users.
+- Kafka como bus de eventos de audiencia y reacciones; RabbitMQ para comandos
+  transaccionales (room.created / room.closed).
+- Eventos ROOM_CREATED, LISTENER_JOINED, LISTENER_LEFT y REACTION con DTO
+  tipado, más dos consumer groups sobre el mismo tópico.
+- El audio nunca pasa por los microservicios de Spring Boot.
+
+Desviaciones y ajustes respecto a lo decidido:
+
+1. Despliegue: las salas no usan una EC2 por pieza. MediaMTX, Kafka,
+   ms-live, ms-analytics y ms-kafka-admin conviven en una única EC2
+   `heypudu-live` (t3.medium, 3,8 GB + swap de 2 GB) con Elastic IP
+   `35.170.42.143`. La EC2 del backend solo añade el productor de ms-posts.
+2. Consenso de Kafka: no se usa KRaft sino ZooKeeper 3.9 con dos brokers y
+   RF=2, porque así lo exige la pauta de la EP5. Las imágenes quedan fijadas
+   en Confluent 7.9.0 (Kafka 4.x ya no soporta ZooKeeper).
+3. Segundo tópico: además de `heypudu.live.events` existe
+   `heypudu.posts.events` (POST_CREATED / POST_DELETED) publicado por
+   ms-posts y consumido por `posts-analytics-group`.
+4. Tópicos DLT: `heypudu.live.events.DLT` y `heypudu.posts.events.DLT` con
+   reintentos con backoff exponencial antes de publicar en ellos.
+5. Administración: se añade `ms-kafka-admin` (puerto 8088) con el
+   `AdminClient` expuesto por REST (tópicos, configuraciones y grupos),
+   equivalente al administrador de RabbitMQ.
+6. Endpoint `GET /api/v1/live/rooms/{id}/listeners`: no se implementó; los
+   oyentes activos se consultan a ms-analytics con
+   `GET /api/v1/analytics/rooms/{id}/stats`.
+7. TLS: en lugar de exponer MediaMTX directamente se añade Caddy con
+   certificado de Let's Encrypt sobre el host `sslip.io`, y el ALB bloquea
+   `/api/v1/internal/**` con una respuesta fija 403.
+8. El free tier citado en la sección 5 no aplica: el laboratorio consume
+   crédito, con un ritmo de ~0,13 USD/h con todo encendido (ver
+   COSTES-AWS.md).
+
+Detalle técnico y verificación: DESPLIEGUE-AWS.md secciones 17 y 18.
+Plan por fases actualizado: PLAN-IMPLEMENTACION-KAFKA.md (v1.2).

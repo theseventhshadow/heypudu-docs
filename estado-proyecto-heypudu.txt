@@ -350,10 +350,11 @@ MICROSERVICIOS
   exchanges, colas y bindings con autorización `ROLE_ADMIN`.
 - [HECHO] Se documentaron TTL, límites de cola, límite de entregas y DLQ.
 
-2.15 SALAS DE AUDIO EN VIVO Y KAFKA (EN CURSO)
-----------------------------------------------
-Guia de construccion: PLAN-IMPLEMENTACION-KAFKA.md (v1.1, 18-11-2026).
-Rama de trabajo: feature/ms-live, 2 commits sobre develop/main (5864a4b).
+2.15 SALAS DE AUDIO EN VIVO Y KAFKA (COMPLETADO)
+-----------------------------------------------
+Guia de construccion: PLAN-IMPLEMENTACION-KAFKA.md (v1.2, 24-11-2026).
+Despliegue: DESPLIEGUE-AWS.md secciones 17 y 18. Codigo en main (backend
+c363210, frontend 834cb96).
 
 - [HECHO] Consulta interna de seguimiento en ms-users:
   GET /api/v1/internal/users/by-cognito/{creatorSub}/followers/check?
@@ -373,18 +374,25 @@ Rama de trabajo: feature/ms-live, 2 commits sobre develop/main (5864a4b).
   impide dos salas LIVE por creador.
 - [HECHO] ms-live, su esquema y su usuario agregados a docker-compose.yml e
   init-db.sql.
-- [PENDIENTE] Infraestructura Kafka local (KRaft) y topico
-  heypudu.live.events.
-- [PENDIENTE] Productor LiveRoomEvent en ms-live (ROOM_CREATED, REACTION,
-  LISTENER_JOINED/LEFT).
-- [PENDIENTE] ms-analytics (puerto 8087, consumer group live-analytics-group).
-- [PENDIENTE] Mensajeria RabbitMQ de salas (room.created / room.closed).
-- [PENDIENTE] MediaMTX: despliegue, auth HTTP, hooks y HTTPS/WSS.
-- [PENDIENTE] Frontend: liveService, WHIP/WHEP y pantallas /en-vivo.
-- [PENDIENTE] Prueba punta a punta de /access con un seguidor y un no
-  seguidor reales.
-- [PENDIENTE] Alta de ms-live y ms-analytics en docker-compose.prod.yml,
-  reglas del ALB y bloqueo de /api/v1/internal/** en API Gateway.
+- [HECHO] Infraestructura Kafka: ZooKeeper 3.9 + 2 brokers (Confluent 7.9.0),
+  listener interno `broker1:9092,broker2:9092` y externo `9192/9193`.
+- [HECHO] Topicos `heypudu.live.events` (3 particiones, RF 2, 7 dias) y
+  `heypudu.posts.events` (2 particiones, RF 2, 3 dias), mas sus `.DLT`.
+- [HECHO] Productor LiveRoomEvent en ms-live y productor PostEvent en ms-posts
+  con DTO tipado, `acks=all` e idempotencia.
+- [HECHO] ms-analytics (puerto 8087) con tres grupos: live-analytics-group,
+  live-audit-group y posts-analytics-group; deduplicacion por eventId.
+- [HECHO] Reintentos con backoff exponencial y topicos DLT (DefaultErrorHandler
+  + DeadLetterPublishingRecoverer), verificado con un mensaje invalido.
+- [HECHO] ms-kafka-admin (puerto 8088): topics, configuraciones y grupos de
+  consumo sobre AdminClient, con ROLE_ADMIN.
+- [HECHO] Mensajeria RabbitMQ de salas (room.created / room.closed).
+- [HECHO] MediaMTX con auth HTTP, hooks runOnRead/runOnUnread y TLS con Caddy.
+- [HECHO] Frontend: liveService, WHIP/WHEP y pantallas /en-vivo, con contador de
+  oyentes, reacciones y cierre automatico al finalizar la sala.
+- [HECHO] Prueba punta a punta con un seguidor y un no seguidor reales.
+- [HECHO] Despliegue: EC2 t3.medium con EIP, reglas del ALB (incluida la regla
+  403 para /api/v1/internal/**) y target groups de live, analytics y kafka-admin.
 
 Observaciones: createRoom guarda el cognitoSub en creator_id y en
 creator_cognito_sub; build.gradle de ms-live declara Lombok aunque la
@@ -483,31 +491,27 @@ HACER en frontend, integración y AWS:
   moderación de audios, candidatos a baneo, ban, unban y verificación.
 - API pública con API Gateway, ALB con HTTPS, EC2 con Docker, Neon y S3.
 
-3.6 SALAS DE AUDIO EN VIVO Y KAFKA (PENDIENTE)
-----------------------------------------------
+3.6 SALAS DE AUDIO EN VIVO Y KAFKA (COMPLETADO)
+-----------------------------------------------
 Detalle por tarea, contratos y criterios de aceptación en
-PLAN-IMPLEMENTACION-KAFKA.md (v1.1).
+PLAN-IMPLEMENTACION-KAFKA.md (v1.2).
 
-- [POR HACER] Fase 0: completar docker-compose.yml local (RabbitMQ,
-  variables RABBITMQ_* y ms-heypudu-rabbit-admin) y reactivar tests en
-  ms-auth, ms-posts y ms-interactions.
-- [POR HACER] Fase 3: levantar Kafka KRaft local y crear el tópico
-  heypudu.live.events (3 particiones, RF 1, retención 7 días).
-- [POR HACER] Fase 4: productor Kafka en ms-live con clave roomId y
-  publicación tolerante a fallos.
-- [POR HACER] Fase 5: ms-analytics con consumer group live-analytics-group,
-  idempotencia por eventId y endpoint /api/v1/analytics/rooms/{id}/stats.
-- [POR HACER] Fase 6: room.created (notificación a seguidores) y room.closed
+- [HECHO] Fase 3: Kafka local con ZooKeeper, dos brokers y declaracion
+  idempotente de los dos topicos.
+- [HECHO] Fase 4: productor Kafka en ms-live con clave roomId y
+  publicacion tolerante a fallos.
+- [HECHO] Fase 5: ms-analytics con los tres consumer groups, idempotencia por
+  eventId y endpoints /api/v1/analytics/rooms/{id}/stats y /posts/stats.
+- [HECHO] Fase 6: room.created (notificacion a seguidores) y room.closed
   con cola propia q.heypudu.live.command y su DLQ.
-- [POR HACER] Fase 7: MediaMTX con authMethod http contra ms-live, hooks
+- [HECHO] Fase 7: MediaMTX con authMethod http contra ms-live, hooks
   runOnRead/runOnUnread y HTTPS/WSS.
-- [POR HACER] Fase 8: despliegue en AWS, reglas del ALB, Security Groups y
-  bloqueo de /api/v1/internal/** en API Gateway.
-- [POR HACER] Frontend F1-F5: tipos, liveService, WHIP/WHEP, pantallas,
-  navegación y despliegue en Vercel.
-- [DECISIÓN] Resolver D1-D7 del plan antes de las fases indicadas:
-  persistencia de reacciones, room.created como evento, identidad en
-  MediaMTX, detección de LISTENER_LEFT, KRaft, ms-analytics separado y
+- [HECHO] Fase 8: despliegue en AWS, reglas del ALB, Security Groups y
+  bloqueo de /api/v1/internal/** en el ALB (403).
+- [HECHO] Frontend F1-F5: tipos, liveService, WHIP/WHEP, pantallas,
+  navegacion y despliegue en Vercel.
+- [HECHO] Decisiones D1-D7 resueltas durante la implementacion.
+- [POR HACER] Tests automatizados de ms-analytics y activacion de CI/CD.
   capacidad de la EC2.
 
 ================================================================================
@@ -573,16 +577,16 @@ FASE 7 — PENDIENTES FUNCIONALES
 40. Limpiar código muerto (data/briefcasts.ts, ms-auth/bin). [POR HACER]
 41. Edición de comentarios. [DESCARTADO por decisión del equipo]
 
-FASE 8 — SALAS DE AUDIO EN VIVO Y KAFKA (PENDIENTE)
----------------------------------------------------
-42. Completar el entorno local (RabbitMQ en compose y tests). [POR HACER]
-43. Levantar Kafka local y crear heypudu.live.events. [POR HACER]
-44. Publicar LiveRoomEvent desde ms-live. [POR HACER]
-45. Crear ms-analytics y sus métricas por sala. [POR HACER]
+FASE 8 — SALAS DE AUDIO EN VIVO Y KAFKA (COMPLETADA)
+----------------------------------------------------
+42. Completar el entorno local (RabbitMQ en compose y tests). [PARCIAL: faltan tests]
+43. Kafka con ZooKeeper, dos brokers y dos topicos declarados. [HECHO]
+44. Publicar LiveRoomEvent desde ms-live y PostEvent desde ms-posts. [HECHO]
+45. ms-analytics con metricas por sala y por publicacion. [HECHO]
 46. Integrar RabbitMQ (room.created / room.closed) y MediaMTX (auth y
-    hooks). [POR HACER]
-47. Construir el frontend de salas (/en-vivo y WHIP/WHEP). [POR HACER]
-48. Desplegar y asegurar la plataforma. [POR HACER]
+    hooks). [HECHO]
+47. Construir el frontend de salas (/en-vivo y WHIP/WHEP). [HECHO]
+48. Desplegar y asegurar la plataforma. [HECHO]
 
 HECHO
 -----
@@ -594,8 +598,9 @@ HECHO
 - Reportes de publicaciones y comentarios.
 - Panel admin con moderación de audios, candidatos a baneo, ban y unban.
 - Eliminar publicación propia desde el menú de la tarjeta.
-- Consulta interna `followers/check` y CRUD de `ms-live` (salas en vivo, en
-  curso; ver 2.15).
+- Consulta interna `followers/check`, CRUD de `ms-live`, `ms-analytics` y
+  `ms-kafka-admin`, clúster Kafka con ZooKeeper y salas en vivo desplegadas
+  con TLS (ver 2.15).
 
 
 

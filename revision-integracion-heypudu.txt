@@ -37,9 +37,9 @@ Siguen pendientes: validacion estricta de claves S3 (punto 9), eliminacion
 del avatar en S3 al borrar la cuenta (punto 10) y las pruebas automatizadas
 de backend (punto 11, ya iniciadas en ms-users).
 
-La funcionalidad de salas de audio en vivo (Kafka, ms-live, MediaMTX) es
-trabajo nuevo y no forma parte de esta revision; su guia es
-PLAN-IMPLEMENTACION-KAFKA.md.
+La funcionalidad de salas de audio en vivo (Kafka, ms-live, MediaMTX) se
+implemento despues de esta revision; su estado real esta en
+PLAN-IMPLEMENTACION-KAFKA.md (v1.2) y en DESPLIEGUE-AWS.md (secciones 17 y 18).
 
 La configuracion detallada vive en DESPLIEGUE-AWS.md.
 El resto de este documento se conserva como registro historico.
