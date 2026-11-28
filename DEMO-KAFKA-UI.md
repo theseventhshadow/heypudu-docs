@@ -87,7 +87,7 @@ Se espera: `zookeeper` y ambos brokers `healthy`, `heypudu-kafka-ui` y los `ms-*
 
 | # | Dónde | Acción |
 |---|---|---|
-| 1 | `Topics` → `heypudu.posts.events` | **Produce Message** con **Value Serde: String** y este valor |
+| 1 | `Topics` → `heypudu.posts.events` | **Produce Message** con **Partition #0**, **Key**: `22222222-2222-2222-2222-222222222222`, **Value Serde: String** y este valor |
 
 ```json
 {"eventId":"11111111-1111-1111-1111-111111111111","eventType":"POST_CREATED","postId":"22222222-2222-2222-2222-222222222222","authorCognitoSub":"33333333-3333-3333-3333-333333333333","postType":"AUDIO","occurredAt":"2026-11-27T12:00:00Z","schemaVersion":1}
@@ -95,16 +95,34 @@ Se espera: `zookeeper` y ambos brokers `healthy`, `heypudu-kafka-ui` y los `ms-*
 
 | # | Dónde | Acción |
 |---|---|---|
-| 2 | Igual | Enviar **el mismo JSON otra vez**, con el mismo `eventId` |
-| 3 | `Topics` → `heypudu.posts.events` | Verificar que hay **dos mensajes nuevos** (dos offsets) |
-| 4 | `Consumers` → `posts-analytics-group` | El LAG vuelve a 0: **ambos se consumieron** |
-| 5 | `GET /api/v1/analytics/posts/stats` (con `idToken` de Cognito) | El contador de creadas subió **una sola vez** |
+| 2 | Diálogo | Marcar **☑ Keep contents** y volver a pulsar **Produce Message** sin cambiar nada |
+| 3 | `Topics` → `heypudu.posts.events` → **Overview** | El **Next Offset** de la partición 0 sube **+2** (se escriben los dos mensajes) |
+| 4 | `Consumers` → `posts-analytics-group` | **Total lag: 0**: ambos se consumieron |
+| 5 | Terminal | Ver el descarte por duplicado en el log (nivel `DEBUG` ya activo) |
+
+```bash
+docker logs --tail 200 heypudu-ms-analytics 2>&1 | grep -i duplicado
+```
+
+Salida esperada (una sola línea, no dos):
+
+```text
+DEBUG ... c.h.m.listener.PostEventListener : Evento de publicacion ignorado por duplicado | eventId=11111111-1111-1111-1111-111111111111
+```
+
+### Valores verificados en la ejecución del 27-11-2026
+
+| Momento | Partición 0 | Grupo `posts-analytics-group` |
+|---|---|---|
+| Antes | Next Offset **2** | offset 2, LAG 0 |
+| Después de los dos envíos | Next Offset **4** | offset 4, LAG 0 |
+| Log | — | una única línea `ignorado por duplicado` |
 
 ### Frase para la exposición
 
-> "Kafka garantiza al menos una entrega, no exactamente una. El segundo mensaje se consume, pero `processedEvents.putIfAbsent` lo descarta porque ya vio ese `eventId`. Por eso cada evento lleva identidad propia."
+> "Kafka garantiza al menos una entrega, no exactamente una. El segundo mensaje se consume, pero `processedEvents.putIfAbsent` lo descarta porque ya vio ese `eventId`. Por eso cada evento lleva identidad propia; sin esto, cada reenvío del productor inflaría el contador."
 
-**Nota:** la interfaz no muestra ese endpoint; si no se puede abrir con token, basta con explicar que los dos offsets se consumieron y el contador no cambió.
+**Nota:** el contador también se puede consultar en `GET /api/v1/analytics/posts/stats`, pero exige un `idToken` de Cognito. Para la demo es más rápido y más claro el log, que muestra el descarte por `eventId`.
 
 ---
 
@@ -149,7 +167,7 @@ Se espera: `zookeeper` y ambos brokers `healthy`, `heypudu-kafka-ui` y los `ms-*
 | Demostración | Evidencia en pantalla | Requisito que cubre |
 |---|---|---|
 | A | `{}` en `heypudu.posts.events.DLT` + cabeceras con la excepción + LAG 0 | Manejo de errores con reintentos y tópico de mensajes muertos |
-| B | Dos offsets consumidos y un solo incremento de contador | Idempotencia del consumidor por `eventId` |
+| B | Dos offsets consumidos y una sola línea `ignorado por duplicado` en el log | Idempotencia del consumidor por `eventId` |
 | C | ISR de `[1,2]` a `[2]` y de vuelta, con publicación exitosa | Replicación (`RF=2`) y disponibilidad |
 | D | LAG sube y vuelve a 0 tras reiniciar offsets | Retención y reprocesamiento |
 
