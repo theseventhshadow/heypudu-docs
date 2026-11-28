@@ -215,6 +215,7 @@ Partition: 1  Leader: 2  Replicas: 1,2  Isr: 2,1
 | `Produce Message` da error de serialización | Serde distinto de `String` | Cambiar **Value Serde** a `String` |
 | El mensaje no aparece en el DLT | Todavía no se consumió | Esperar 1–2 s, refrescar; revisar `docker logs --tail 30 heypudu-ms-analytics` |
 | La interfaz no carga en `localhost:8090` | Túnel cerrado o instancia detenida | Relanzar el `ssh -L`; verificar `docker ps` en la EC2 |
+| `ssh: connect to host ... port 22: Connection timed out` | La IP doméstica cambió y `heypudu-live-sg` solo permite la anterior, o la instancia está detenida | Ver la IP con `https://checkip.amazonaws.com`, actualizar la regla `22` del SG y volver a intentar. Tras cortes de internet conviene relanzar el túnel con `-o ServerAliveInterval=30` |
 | No aparece el clúster en la barra lateral | Los brokers aún arrancan | Esperar al `healthy` de `zookeeper` y ambos brokers |
 
 ---
