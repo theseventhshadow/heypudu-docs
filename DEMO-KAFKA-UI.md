@@ -1,0 +1,194 @@
+# Guion de demostración con Kafka UI — heyPudú!
+
+**Proyecto:** heyPudú!
+**Propósito:** ejecutar la demostración de Kafka de principio a fin **desde la interfaz web** (Kafka UI), sin depender de la terminal salvo para arrancar la infraestructura.
+**Duración total:** 15–20 minutos.
+**Documento de referencia:** `KAFKA-IMPLEMENTACION.md` (§6 errores y DLT, §9 operación, §10 compose).
+
+---
+
+## 0. Preparación (antes de entrar a la sala)
+
+| Paso | Acción |
+|---|---|
+| 1 | Arrancar las instancias: `aws ec2 start-instances --instance-ids i-09ea2f39fef85c88b i-05b808f859f54a876 i-0f42928aad2cef8bb --no-cli-pager` |
+| 2 | Esperar 1–2 minutos a que los servicios estén sanos |
+| 3 | Abrir el túnel SSH: `ssh -i backhp.pem -N -L 8090:localhost:8090 ec2-user@35.170.42.143` |
+| 4 | Abrir http://localhost:8090 y verificar que el clúster **heypudu** aparece en verde |
+
+Comprobación rápida de que todo está arriba (en la EC2 3):
+
+```bash
+cd heyPudu-backend
+docker compose --env-file live-prod.env -f docker-compose.live.prod.yml ps
+```
+
+Se espera: `zookeeper` y ambos brokers `healthy`, `heypudu-kafka-ui` y los `ms-*` en `Up`.
+
+**Dejar preparadas estas pestañas del navegador:**
+
+1. `Topics` → `heypudu.posts.events`
+2. `Topics` → `heypudu.posts.events.DLT`
+3. `Consumers` → `posts-analytics-group`
+
+---
+
+## 1. Demostración A — un mensaje inválido acaba en el DLT (5 min)
+
+**Qué se demuestra:** el consumidor detecta un payload inválido, no reintenta en vano, lo publica en el tópico de mensajes muertos y **libera la partición**.
+
+### Pasos
+
+| # | Dónde | Acción |
+|---|---|---|
+| 1 | `Topics` → `heypudu.posts.events` | Observar en **Overview** las 2 particiones con ISR `[1,2]` |
+| 2 | Misma pantalla | Pulsar **Produce Message** (arriba a la derecha) |
+| 3 | Diálogo | **Partition**: `-1` (automático) · **Key**: vacío · **Value Serde**: **`String`** · **Value**: `{}` |
+| 4 | Diálogo | **Submit** y esperar la confirmación con el offset |
+| 5 | `Topics` → `heypudu.posts.events.DLT` | Pestaña **Messages** → pulsar la búsqueda (🔍) |
+| 6 | Lista de mensajes | Aparece el `{}` con su partición y offset |
+| 7 | Mensaje | Clic en **+** del offset → panel de detalle → pestaña **Headers** |
+| 8 | `Consumers` → `posts-analytics-group` | **Total lag: 0** y el offset de esa partición avanzó |
+
+> El serde debe ser **String**. Con otro serde el `{}` puede serializarse de otra forma y no provocar el error esperado.
+
+### Qué mirar en las cabeceras del mensaje del DLT
+
+| Header | Valor esperado | Qué prueba |
+|---|---|---|
+| `kafka_dlt-exception-fqcn` | `java.lang.IllegalArgumentException` | La excepción real que descartó el mensaje |
+| `kafka_dlt-exception-message` | `Evento de publicacion invalido: falta eventId, postId o eventType` | El motivo, no solo el hecho |
+| `kafka_dlt-original-topic` | `heypudu.posts.events` | Trazabilidad del origen |
+| `kafka_dlt-original-partition` | `0` o `1` | Partición original |
+| `kafka_dlt-original-offset` | el offset del mensaje enviado | Posición exacta |
+
+### Frase para la exposición
+
+> "Un mensaje con payload inválido no se reintenta, porque reintentar un JSON roto no lo arregla nunca. Se publica en `.DLT` con la excepción adjunta en las cabeceras, se confirma el offset y la partición sigue avanzando. Sin esto, la partición quedaría bloqueada para siempre y los mensajes válidos posteriores no se procesarían."
+
+---
+
+## 2. Demostración B — un duplicado no se cuenta dos veces (3 min)
+
+**Qué se demuestra:** idempotencia en el consumidor mediante `eventId`.
+
+### Pasos
+
+| # | Dónde | Acción |
+|---|---|---|
+| 1 | `Topics` → `heypudu.posts.events` | **Produce Message** con **Value Serde: String** y este valor |
+
+```json
+{"eventId":"11111111-1111-1111-1111-111111111111","eventType":"POST_CREATED","postId":"22222222-2222-2222-2222-222222222222","authorCognitoSub":"33333333-3333-3333-3333-333333333333","postType":"AUDIO","occurredAt":"2026-11-27T12:00:00Z","schemaVersion":1}
+```
+
+| # | Dónde | Acción |
+|---|---|---|
+| 2 | Igual | Enviar **el mismo JSON otra vez**, con el mismo `eventId` |
+| 3 | `Topics` → `heypudu.posts.events` | Verificar que hay **dos mensajes nuevos** (dos offsets) |
+| 4 | `Consumers` → `posts-analytics-group` | El LAG vuelve a 0: **ambos se consumieron** |
+| 5 | `GET /api/v1/analytics/posts/stats` (con `idToken` de Cognito) | El contador de creadas subió **una sola vez** |
+
+### Frase para la exposición
+
+> "Kafka garantiza al menos una entrega, no exactamente una. El segundo mensaje se consume, pero `processedEvents.putIfAbsent` lo descarta porque ya vio ese `eventId`. Por eso cada evento lleva identidad propia."
+
+**Nota:** la interfaz no muestra ese endpoint; si no se puede abrir con token, basta con explicar que los dos offsets se consumieron y el contador no cambió.
+
+---
+
+## 3. Demostración C — tolerancia a la caída de un broker (4 min)
+
+**Qué se demuestra:** con `RF=2` y `min.insync.replicas=1` el clúster sigue aceptando escrituras con un broker menos.
+
+### Pasos
+
+| # | Dónde | Acción |
+|---|---|---|
+| 1 | `Topics` → `heypudu.posts.events` → **Overview** | Anotar: 2 particiones, ISR `[1,2]`, *Under replicated* = 0 |
+| 2 | Terminal (único paso fuera de la interfaz) | `docker stop heypudu-broker1` |
+| 3 | `Topics` → `heypudu.posts.events` → **Overview** | Refrescar: la ISR baja a `[2]` y *Under replicated* = 1 |
+| 4 | `Topics` → `heypudu.posts.events` → **Produce Message** | Enviar un mensaje válido: **se acepta igual** |
+| 5 | Terminal | `docker start heypudu-broker1` |
+| 6 | **Overview** | La ISR vuelve a `[1,2]` y *Under replicated* = 0 |
+
+### Frase para la exposición
+
+> "Kafka UI no puede apagar procesos, pero sirve para ver el efecto: con un broker caído la réplica se queda fuera del ISR, y como `min.insync.replicas` es 1, la publicación no se bloquea. Al volver el broker, se resincroniza solo."
+
+---
+
+## 4. Demostración D (opcional) — releer el histórico (3 min)
+
+**Qué se demuestra:** los eventos se pueden reprocesar; una cola clásica no permite esto.
+
+| # | Dónde | Acción |
+|---|---|---|
+| 1 | Terminal | `docker stop heypudu-ms-analytics` (un grupo con miembros activos no permite reiniciar offsets) |
+| 2 | `Consumers` → `posts-analytics-group` | Menú del grupo (**⋮**) → **Reset offsets** → elegir el tópico → *Earliest* |
+| 3 | Terminal | `docker start heypudu-ms-analytics` |
+| 4 | `Consumers` → `posts-analytics-group` | El LAG sube y baja a 0 mientras se reprocesa todo el tópico |
+
+**Cuándo usarlo:** solo si sobra tiempo. Reiniciar offsets es irreversible para ese grupo.
+
+---
+
+## 5. Resumen de evidencias
+
+| Demostración | Evidencia en pantalla | Requisito que cubre |
+|---|---|---|
+| A | `{}` en `heypudu.posts.events.DLT` + cabeceras con la excepción + LAG 0 | Manejo de errores con reintentos y tópico de mensajes muertos |
+| B | Dos offsets consumidos y un solo incremento de contador | Idempotencia del consumidor por `eventId` |
+| C | ISR de `[1,2]` a `[2]` y de vuelta, con publicación exitosa | Replicación (`RF=2`) y disponibilidad |
+| D | LAG sube y vuelve a 0 tras reiniciar offsets | Retención y reprocesamiento |
+
+---
+
+## 6. Problemas frecuentes
+
+| Síntoma | Causa | Solución |
+|---|---|---|
+| La pestaña **Messages** aparece vacía | La consulta no se ha ejecutado | Pulsar el botón de búsqueda (🔍) y elegir *Oldest First* |
+| `Produce Message` da error de serialización | Serde distinto de `String` | Cambiar **Value Serde** a `String` |
+| El mensaje no aparece en el DLT | Todavía no se consumió | Esperar 1–2 s, refrescar; revisar `docker logs --tail 30 heypudu-ms-analytics` |
+| La interfaz no carga en `localhost:8090` | Túnel cerrado o instancia detenida | Relanzar el `ssh -L`; verificar `docker ps` en la EC2 |
+| No aparece el clúster en la barra lateral | Los brokers aún arrancan | Esperar al `healthy` de `zookeeper` y ambos brokers |
+
+---
+
+## 7. Advertencias
+
+1. **No usar "Purge messages"** en `heypudu.posts.events` ni en `heypudu.live.events`: borra el histórico y deja sin evidencia el resto de la exposición.
+2. La interfaz corre con `DYNAMIC_CONFIG_ENABLED: "true"`: permite producir, borrar y purgar. Está publicada **solo en `127.0.0.1:8090`**, accesible por túnel; no abrirla al ALB sin autenticación.
+3. Los contadores de `ms-analytics` están **en memoria**: se reinician si se reinicia el servicio (útil para el paso D, pero conviene decirlo si preguntan).
+4. Al terminar, cerrar el túnel (`Ctrl+C`) y detener las instancias si no se van a usar.
+
+---
+
+## 8. Anexo — equivalentes por terminal
+
+```bash
+# Publicar el mensaje inválido
+echo '{}' | docker exec -i heypudu-broker1 kafka-console-producer \
+  --bootstrap-server broker1:9092 --topic heypudu.posts.events
+
+# Leer el DLT
+docker exec heypudu-broker1 kafka-console-consumer --bootstrap-server broker1:9092 \
+  --topic heypudu.posts.events.DLT --from-beginning --max-messages 1
+
+# Estado del grupo y LAG
+docker exec heypudu-broker1 kafka-consumer-groups --bootstrap-server broker1:9092 \
+  --describe --group posts-analytics-group
+
+# ISR por partición
+docker exec heypudu-broker1 kafka-topics --bootstrap-server broker1:9092 \
+  --describe --topic heypudu.posts.events
+```
+
+---
+
+## 9. Registro de cambios
+
+| Fecha | Cambio |
+|---|---|
+| 27-11-2026 | Creación del guion con las cuatro demostraciones, evidencias y resolución de problemas. |

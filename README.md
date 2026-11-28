@@ -18,6 +18,7 @@ El código vive en repositorios aparte:
 | [`respecto a kafka.txt`](./respecto%20a%20kafka.txt) | Notas sobre Kafka: tópico, grupos de consumo y eventos. |
 | [`PLAN-IMPLEMENTACION-KAFKA.md`](./PLAN-IMPLEMENTACION-KAFKA.md) | Plan de implementación de las salas de audio en vivo con Kafka. |
 | [`KAFKA-IMPLEMENTACION.md`](./KAFKA-IMPLEMENTACION.md) | Cómo está implementado Kafka: funciones, productores, consumidores, DLT, administración, operación y cumplimiento de la pauta EP5. |
+| [`DEMO-KAFKA-UI.md`](./DEMO-KAFKA-UI.md) | Guion paso a paso de la demostración con Kafka UI: mensaje inválido hasta el DLT, duplicado idempotente, caída de un broker y reprocesamiento. |
 | [`revision-integracion-heypudu.txt`](./revision-integracion-heypudu.txt) | Revisión de la integración entre microservicios y frontend. |
 | [`DESPLIEGUE-AWS.md`](./DESPLIEGUE-AWS.md) | Despliegue completo en AWS: VPC, Security Groups, ALB, EC2, TLS y verificación. |
 | [`COSTES-AWS.md`](./COSTES-AWS.md) | Consumo del crédito del laboratorio y seguimiento diario hasta la demo. |
