@@ -134,16 +134,50 @@ DEBUG ... c.h.m.listener.PostEventListener : Evento de publicacion ignorado por 
 
 | # | Dónde | Acción |
 |---|---|---|
-| 1 | `Topics` → `heypudu.posts.events` → **Overview** | Anotar: 2 particiones, ISR `[1,2]`, *Under replicated* = 0 |
+| 1 | `Topics` → `heypudu.posts.events` → **Overview** | Anotar: 2 particiones, ISR de 2 réplicas, *URP* = 0 |
 | 2 | Terminal (único paso fuera de la interfaz) | `docker stop heypudu-broker1` |
-| 3 | `Topics` → `heypudu.posts.events` → **Overview** | Refrescar: la ISR baja a `[2]` y *Under replicated* = 1 |
+| 3 | `Topics` → `heypudu.posts.events` → **Overview** | Refrescar: la ISR baja a **1** y *URP* = 1; el liderazgo de las particiones que estaban en el broker 1 pasa al broker 2 |
 | 4 | `Topics` → `heypudu.posts.events` → **Produce Message** | Enviar un mensaje válido: **se acepta igual** |
 | 5 | Terminal | `docker start heypudu-broker1` |
-| 6 | **Overview** | La ISR vuelve a `[1,2]` y *Under replicated* = 0 |
+| 6 | **Overview** | La ISR vuelve a **2** y *URP* = 0 |
+
+### Valores verificados en la ejecución del 27-11-2026
+
+Estado inicial:
+
+```text
+Partition: 0  Leader: 2  Replicas: 2,1  Isr: 2,1
+Partition: 1  Leader: 1  Replicas: 1,2  Isr: 2,1
+```
+
+Con `heypudu-broker1` detenido:
+
+```text
+Partition: 0  Leader: 2  Replicas: 2,1  Isr: 2      <- la réplica 1 salió del ISR
+Partition: 1  Leader: 2  Replicas: 1,2  Isr: 2      <- el liderazgo se movió al broker 2
+```
+
+Publicación con un broker caído (el productor apunta a `broker1:9092,broker2:9092`):
+
+```text
+WARN Couldn't resolve server broker1:9092 from bootstrap.servers as DNS
+     resolution failed for broker1  ->  el cliente continúa con el broker 2
+heypudu.posts.events:0:5      <- el mensaje se escribió igual
+posts-analytics-group partition 0: CURRENT-OFFSET 5 = LOG-END-OFFSET 5, LAG 0
+```
+
+Tras `docker start heypudu-broker1`:
+
+```text
+Partition: 0  Leader: 2  Replicas: 2,1  Isr: 2,1
+Partition: 1  Leader: 2  Replicas: 1,2  Isr: 2,1
+```
+
+> El liderazgo de las particiones no vuelve solo al broker original de inmediato: Kafka lo reequilibra con `auto.leader.rebalance` (cada 5 minutos). Lo que importa para la demo es que la **ISR vuelve a 2**.
 
 ### Frase para la exposición
 
-> "Kafka UI no puede apagar procesos, pero sirve para ver el efecto: con un broker caído la réplica se queda fuera del ISR, y como `min.insync.replicas` es 1, la publicación no se bloquea. Al volver el broker, se resincroniza solo."
+> "Kafka UI no puede apagar procesos, pero sirve para ver el efecto: con un broker caído la réplica se queda fuera del ISR, y como `min.insync.replicas` es 1, la publicación no se bloquea. El cliente ni siquiera falla: registra un WARN porque no resuelve `broker1` y sigue con el broker 2. Al volver el broker, se resincroniza solo."
 
 ---
 
@@ -168,7 +202,7 @@ DEBUG ... c.h.m.listener.PostEventListener : Evento de publicacion ignorado por 
 |---|---|---|
 | A | `{}` en `heypudu.posts.events.DLT` + cabeceras con la excepción + LAG 0 | Manejo de errores con reintentos y tópico de mensajes muertos |
 | B | Dos offsets consumidos y una sola línea `ignorado por duplicado` en el log | Idempotencia del consumidor por `eventId` |
-| C | ISR de `[1,2]` a `[2]` y de vuelta, con publicación exitosa | Replicación (`RF=2`) y disponibilidad |
+| C | ISR de 2 a 1 y de vuelta, con publicación exitosa y WARN del cliente | Replicación (`RF=2`) y disponibilidad |
 | D | LAG sube y vuelve a 0 tras reiniciar offsets | Retención y reprocesamiento |
 
 ---
