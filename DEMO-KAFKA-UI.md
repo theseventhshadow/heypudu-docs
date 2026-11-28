@@ -41,26 +41,37 @@ Se espera: `zookeeper` y ambos brokers `healthy`, `heypudu-kafka-ui` y los `ms-*
 
 | # | Dónde | Acción |
 |---|---|---|
-| 1 | `Topics` → `heypudu.posts.events` | Observar en **Overview** las 2 particiones con ISR `[1,2]` |
+| 1 | `Topics` → `heypudu.posts.events` | Observar en **Overview** las 2 particiones con ISR `[1,2]` y anotar el **Next Offset** de cada una |
 | 2 | Misma pantalla | Pulsar **Produce Message** (arriba a la derecha) |
 | 3 | Diálogo | **Partition**: `-1` (automático) · **Key**: vacío · **Value Serde**: **`String`** · **Value**: `{}` |
-| 4 | Diálogo | **Submit** y esperar la confirmación con el offset |
-| 5 | `Topics` → `heypudu.posts.events.DLT` | Pestaña **Messages** → pulsar la búsqueda (🔍) |
-| 6 | Lista de mensajes | Aparece el `{}` con su partición y offset |
-| 7 | Mensaje | Clic en **+** del offset → panel de detalle → pestaña **Headers** |
+| 4 | Diálogo | **Produce Message** (botón del diálogo) y esperar el aviso *Message successfully sent* |
+| 5 | `Topics` → `heypudu.posts.events.DLT` | Pestaña **Messages** → pulsar **Submit** (la lupa) |
+| 6 | Lista de mensajes | Aparece un mensaje nuevo en la partición donde se envió, con su offset |
+| 7 | Mensaje | Clic en la fila → panel de detalle → pestaña **Headers** |
 | 8 | `Consumers` → `posts-analytics-group` | **Total lag: 0** y el offset de esa partición avanzó |
 
 > El serde debe ser **String**. Con otro serde el `{}` puede serializarse de otra forma y no provocar el error esperado.
+>
+> **Qué se ve como payload del DLT:** no es el `{}` literal, sino el registro ya deserializado y vuelto a serializar con `JsonSerializer` en el productor de mensajes muertos:
+>
+> ```json
+> {"eventId":null,"eventType":null,"postId":null,"authorCognitoSub":null,"postType":null,"occurredAt":null,"schemaVersion":0}
+> ```
+>
+> Son 123 bytes y es evidencia útil: muestra exactamente el objeto que llegó vacío. Si se quisiera conservar el byte original habría que usar `ByteArraySerializer` en ese productor.
+>
+> **Línea base:** el tópico puede tener mensajes de pruebas anteriores (el 27-11-2026 había 1 en la partición 0). Anota cuántos hay antes de empezar para no confundirlos con el nuevo.
 
 ### Qué mirar en las cabeceras del mensaje del DLT
 
 | Header | Valor esperado | Qué prueba |
 |---|---|---|
-| `kafka_dlt-exception-fqcn` | `java.lang.IllegalArgumentException` | La excepción real que descartó el mensaje |
-| `kafka_dlt-exception-message` | `Evento de publicacion invalido: falta eventId, postId o eventType` | El motivo, no solo el hecho |
+| `kafka_dlt-exception-fqcn` | `org.springframework.kafka.listener.ListenerExecutionFailedException` | El contenedor envolvió el fallo del listener |
+| `kafka_dlt-exception-cause-fqcn` | `java.lang.IllegalArgumentException` | **La excepción real** que descartó el mensaje |
+| `kafka_dlt-exception-message` | `Listener method '...PostEventListener.onEvent(...)' threw exception; Evento de publicacion invalido: falta eventId, postId o eventType` | El motivo, no solo el hecho |
+| `kafka_dlt-exception-stacktrace` | traza completa con `Caused by: java.lang.IllegalArgumentException` | Permite depurar sin buscar en los logs |
 | `kafka_dlt-original-topic` | `heypudu.posts.events` | Trazabilidad del origen |
-| `kafka_dlt-original-partition` | `0` o `1` | Partición original |
-| `kafka_dlt-original-offset` | el offset del mensaje enviado | Posición exacta |
+| `kafka_dlt-original-partition` | `0` o `1` | Partición original (se muestra en binario) |
 
 ### Frase para la exposición
 
@@ -148,7 +159,7 @@ Se espera: `zookeeper` y ambos brokers `healthy`, `heypudu-kafka-ui` y los `ms-*
 
 | Síntoma | Causa | Solución |
 |---|---|---|
-| La pestaña **Messages** aparece vacía | La consulta no se ha ejecutado | Pulsar el botón de búsqueda (🔍) y elegir *Oldest First* |
+| La pestaña **Messages** aparece vacía | La consulta no se ha ejecutado | Pulsar **Submit** (la lupa) y elegir *Oldest First* |
 | `Produce Message` da error de serialización | Serde distinto de `String` | Cambiar **Value Serde** a `String` |
 | El mensaje no aparece en el DLT | Todavía no se consumió | Esperar 1–2 s, refrescar; revisar `docker logs --tail 30 heypudu-ms-analytics` |
 | La interfaz no carga en `localhost:8090` | Túnel cerrado o instancia detenida | Relanzar el `ssh -L`; verificar `docker ps` en la EC2 |
